@@ -105,6 +105,9 @@ static void append_line(const char* path, const char* line) {
     f.close();
 }
 
+static void place_meta_path(const char* id, char* out, size_t cap);
+static void place_meta_write(const char* id, const char* name);
+
 static void load_settings() {
     esp_settings_defaults(&g_settings);
     if(LittleFS.exists(SETTINGS_PATH)) {
@@ -137,6 +140,93 @@ static void ensure_default_place() {
     char log[128];
     place_file("census_log.csv", log, sizeof(log));
     if(!LittleFS.exists(log)) append_line(log, CENSUS_LOG_HEADER);
+    char meta[96];
+    place_meta_path(g_settings.place_id, meta, sizeof(meta));
+    if(!LittleFS.exists(meta)) place_meta_write(g_settings.place_id, "Home");
+}
+
+static String settings_json() {
+    String s = "{";
+    s += "\"place_id\":\"" + String(g_settings.place_id) + "\",";
+    s += "\"mode\":" + String(g_settings.mode) + ",";
+    s += "\"freq_preset\":" + String(g_settings.freq_preset) + ",";
+    s += "\"capture_preset\":" + String(g_settings.capture_preset) + ",";
+    s += "\"use_watchlist\":" + String(g_settings.use_watchlist ? "true" : "false") + ",";
+    s += "\"rssi_auto\":" + String(g_settings.rssi_auto ? "true" : "false") + ",";
+    s += "\"rssi_threshold\":" + String(g_settings.rssi_threshold) + ",";
+    s += "\"dwell_ms\":" + String(g_settings.dwell_ms) + ",";
+    s += "\"capture_max_ms\":" + String(g_settings.capture_max_ms) + ",";
+    s += "\"survey_minutes\":" + String(g_settings.survey_minutes) + ",";
+    s += "\"auto_classify\":" + String(g_settings.auto_classify ? "true" : "false") + ",";
+    s += "\"match_db\":" + String(g_settings.match_db ? "true" : "false") + ",";
+    s += "\"tx_enabled\":" + String(g_settings.tx_enabled ? "true" : "false") + ",";
+    s += "\"mqtt_enabled\":" + String(g_settings.mqtt_enabled ? "true" : "false");
+    s += "}";
+    return s;
+}
+
+// --- place management (Esp §5) ---
+
+static void place_meta_path(const char* id, char* out, size_t cap) {
+    snprintf(out, cap, "/places/%s/place.meta", id);
+}
+
+static void place_meta_write(const char* id, const char* name) {
+    char p[96];
+    place_meta_path(id, p, sizeof(p));
+    File f = LittleFS.open(p, "w");
+    if(f) {
+        f.print(name);
+        f.close();
+    }
+}
+
+static String place_name(const char* id) {
+    char p[96];
+    place_meta_path(id, p, sizeof(p));
+    if(LittleFS.exists(p)) {
+        File f = LittleFS.open(p, "r");
+        String n = f.readStringUntil('\n');
+        f.close();
+        n.trim();
+        if(n.length()) return n;
+    }
+    return String(id);
+}
+
+static void place_scaffold(const char* id) {
+    char dir[96];
+    esp_place_dir(FS_BASE, id, dir, sizeof(dir));
+    LittleFS.mkdir(dir);
+    char cap[128];
+    esp_place_file(FS_BASE, id, "captures", cap, sizeof(cap));
+    LittleFS.mkdir(cap);
+    char log[128];
+    esp_place_file(FS_BASE, id, "census_log.csv", log, sizeof(log));
+    if(!LittleFS.exists(log)) append_line(log, CENSUS_LOG_HEADER);
+}
+
+static String places_json() {
+    String s = "{\"active\":\"" + String(g_settings.place_id) + "\",\"places\":[";
+    File dir = LittleFS.open("/places");
+    bool first = true;
+    if(dir) {
+        for(File e = dir.openNextFile(); e; e = dir.openNextFile()) {
+            if(e.isDirectory()) {
+                String id = String(e.name());
+                int slash = id.lastIndexOf('/');
+                if(slash >= 0) id = id.substring(slash + 1);
+                if(!first) s += ",";
+                first = false;
+                s += "{\"id\":\"" + id + "\",\"name\":\"" + place_name(id.c_str()) +
+                     "\",\"active\":" + (id == g_settings.place_id ? "true" : "false") + "}";
+            }
+            e.close();
+        }
+        dir.close();
+    }
+    s += "]}";
+    return s;
 }
 
 // Rotate oldest capture files so the count stays under MAX_CAPTURES (Esp §4). Names are
@@ -507,8 +597,86 @@ static void handle_inject(AsyncWebServerRequest* req, uint8_t* data, size_t len)
 
 static void web_start() {
     g_server.addHandler(&g_ws);
-    g_server.on("/", HTTP_GET, [](AsyncWebServerRequest* req) {
-        req->send_P(200, "text/html", INDEX_HTML);
+    // Full UI ships as LittleFS data/ assets (uploaded via `pio run -t uploadfs`); the inline
+    // PROGMEM page is the fallback when the filesystem image hasn't been flashed.
+    if(LittleFS.exists("/index.html")) {
+        g_server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
+    } else {
+        g_server.on("/", HTTP_GET, [](AsyncWebServerRequest* req) {
+            req->send_P(200, "text/html", INDEX_HTML);
+        });
+    }
+    g_server.on("/api/settings", HTTP_GET, [](AsyncWebServerRequest* req) {
+        req->send(200, "application/json", settings_json());
+    });
+    g_server.on("/api/settings", HTTP_POST, [](AsyncWebServerRequest* req) {
+        auto ui = [&](const char* k, uint32_t& v) {
+            if(req->hasParam(k, true)) v = (uint32_t)req->getParam(k, true)->value().toInt();
+        };
+        auto u8 = [&](const char* k, uint8_t& v) {
+            if(req->hasParam(k, true)) v = (uint8_t)req->getParam(k, true)->value().toInt();
+        };
+        auto b = [&](const char* k, bool& v) {
+            if(req->hasParam(k, true)) v = req->getParam(k, true)->value() != "0";
+        };
+        u8("mode", g_settings.mode);
+        u8("freq_preset", g_settings.freq_preset);
+        u8("capture_preset", g_settings.capture_preset);
+        b("use_watchlist", g_settings.use_watchlist);
+        b("rssi_auto", g_settings.rssi_auto);
+        if(req->hasParam("rssi_threshold", true))
+            g_settings.rssi_threshold = req->getParam("rssi_threshold", true)->value().toInt();
+        ui("dwell_ms", g_settings.dwell_ms);
+        ui("capture_max_ms", g_settings.capture_max_ms);
+        if(req->hasParam("survey_minutes", true))
+            g_settings.survey_minutes = req->getParam("survey_minutes", true)->value().toInt();
+        b("auto_classify", g_settings.auto_classify);
+        b("match_db", g_settings.match_db);
+        b("tx_enabled", g_settings.tx_enabled);
+        b("mqtt_enabled", g_settings.mqtt_enabled);
+        if(req->hasParam("wifi_ssid", true))
+            strncpy(g_settings.wifi_ssid, req->getParam("wifi_ssid", true)->value().c_str(), ESP_STR_LEN - 1);
+        if(req->hasParam("wifi_pass", true))
+            strncpy(g_settings.wifi_pass, req->getParam("wifi_pass", true)->value().c_str(), ESP_STR_LEN - 1);
+        if(req->hasParam("mqtt_host", true))
+            strncpy(g_settings.mqtt_host, req->getParam("mqtt_host", true)->value().c_str(), ESP_STR_LEN - 1);
+        save_settings();
+        req->send(200, "application/json", "{\"ok\":true}");
+    });
+    g_server.on("/api/places", HTTP_GET, [](AsyncWebServerRequest* req) {
+        req->send(200, "application/json", places_json());
+    });
+    g_server.on("/api/place", HTTP_POST, [](AsyncWebServerRequest* req) {
+        String action = req->hasParam("action", true) ? req->getParam("action", true)->value() : "";
+        String name = req->hasParam("name", true) ? req->getParam("name", true)->value() : "";
+        String pid = req->hasParam("id", true) ? req->getParam("id", true)->value() : "";
+        if(action == "create" && name.length()) {
+            char id[ESP_PLACE_ID_LEN];
+            esp_place_id_from_name(name.c_str(), id, sizeof(id));
+            place_scaffold(id);
+            place_meta_write(id, name.c_str());
+            strncpy(g_settings.place_id, id, ESP_PLACE_ID_LEN - 1);
+            save_settings();
+        } else if(action == "switch" && pid.length()) {
+            strncpy(g_settings.place_id, pid.c_str(), ESP_PLACE_ID_LEN - 1);
+            save_settings();
+        } else if(action == "rename" && pid.length() && name.length()) {
+            place_meta_write(pid.c_str(), name.c_str());
+        } else if(action == "delete" && pid.length()) {
+            // never delete the last place or the global signatures/ (System §5.6)
+            char dir[96];
+            esp_place_dir(FS_BASE, pid.c_str(), dir, sizeof(dir));
+            LittleFS.rmdir(dir); // best-effort; children removed by the fs layer / TODO(hw) recursive
+            if(pid == g_settings.place_id) {
+                esp_settings_defaults(&g_settings); // falls back to 'home'
+                ensure_default_place();
+                save_settings();
+            }
+        } else {
+            req->send(400, "application/json", "{\"error\":\"bad action\"}");
+            return;
+        }
+        req->send(200, "application/json", "{\"ok\":true}");
     });
     g_server.on("/api/status", HTTP_GET, [](AsyncWebServerRequest* req) {
         req->send(200, "application/json", status_json());

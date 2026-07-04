@@ -45,6 +45,40 @@ def parse_captures_csv(text: str) -> list[dict]:
     return list(csv.DictReader(io.StringIO(text)))
 
 
+SETTINGS_KEYS = {
+    "place_id", "mode", "freq_preset", "capture_preset", "use_watchlist", "rssi_auto",
+    "rssi_threshold", "dwell_ms", "capture_max_ms", "survey_minutes", "auto_classify",
+    "match_db", "tx_enabled", "mqtt_enabled",
+}
+
+
+def parse_settings(text: str) -> dict:
+    obj = json.loads(text)
+    missing = SETTINGS_KEYS - set(obj)
+    if missing:
+        raise ValueError(f"/api/settings missing keys: {sorted(missing)}")
+    return obj
+
+
+def parse_places(text: str) -> dict:
+    obj = json.loads(text)
+    if "active" not in obj or "places" not in obj:
+        raise ValueError("/api/places must have active + places")
+    for p in obj["places"]:
+        if not {"id", "name", "active"} <= set(p):
+            raise ValueError(f"place entry missing keys: {p}")
+    return obj
+
+
+def parse_candidates(text: str) -> list[dict]:
+    obj = json.loads(text)
+    cands = obj.get("candidates", [])
+    for c in cands:
+        if not {"name", "class", "confidence", "source"} <= set(c):
+            raise ValueError(f"candidate missing keys: {c}")
+    return cands
+
+
 def parse_ws_capture(msg: str) -> dict:
     """A live-feed WebSocket capture message (Esp §5)."""
     obj = json.loads(msg)

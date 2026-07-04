@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SubCensusEsp</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; background: #0f1115; color: #e6e6e6; }
+    header { padding: 10px 16px; background: #171a21; border-bottom: 1px solid #2a2f3a; display: flex; align-items: baseline; gap: 12px; }
+    h1 { font-size: 16px; margin: 0; } .muted { color: #8b93a1; font-size: 12px; }
+    nav button { background: none; border: 0; color: #a7b0c0; font-size: 13px; padding: 8px 10px; cursor: pointer; border-bottom: 2px solid transparent; }
+    nav button.active { color: #e6e6e6; border-bottom-color: #2d6cdf; }
+    main { padding: 14px 16px; } section { display: none; } section.active { display: block; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; } th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid #232833; } th { color: #8b93a1; }
+    input, select, button.act { background: #0f1115; color: #e6e6e6; border: 1px solid #2a2f3a; border-radius: 4px; padding: 3px 6px; font-size: 12px; }
+    button.act { background: #2d6cdf; border: 0; cursor: pointer; } button.warn { background: #b3402f; }
+    #feed div, .row { border-bottom: 1px solid #232833; padding: 3px 0; font-size: 12px; } code { color: #9fd0ff; }
+    label { font-size: 12px; color: #a7b0c0; display: inline-block; min-width: 120px; }
+    .field { margin: 6px 0; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>SubCensusEsp</h1>
+    <span class="muted" id="place">place: —</span>
+    <span class="muted" id="radio">cc1101: —</span>
+    <nav>
+      <button data-tab="feed" class="active">Live</button>
+      <button data-tab="review">Review</button>
+      <button data-tab="bands">Bands</button>
+      <button data-tab="places">Places</button>
+      <button data-tab="settings">Settings</button>
+    </nav>
+  </header>
+  <main>
+    <section id="feed" class="active"><h2>Live feed</h2><div id="feedlist"></div></section>
+
+    <section id="review"><h2>Review / label</h2>
+      <table><thead><tr><th>Time</th><th>Freq</th><th>RSSI</th><th>Match</th><th>Label</th></tr></thead>
+      <tbody id="reviewbody"></tbody></table>
+    </section>
+
+    <section id="bands"><h2>Bands</h2>
+      <button class="act" onclick="recon('fixture')">Run (demo)</button>
+      <button class="act warn" onclick="recon('reset')">Reset</button>
+      <h3>Occupancy</h3><table id="occ"></table>
+      <h3>Watchlist</h3><table id="wl"></table>
+    </section>
+
+    <section id="places"><h2>Places</h2>
+      <div id="placelist"></div>
+      <div class="field"><input id="newplace" placeholder="New place name">
+        <button class="act" onclick="createPlace()">Create</button></div>
+    </section>
+
+    <section id="settings"><h2>Settings</h2><form id="setform"></form>
+      <button class="act" onclick="saveSettings()">Save</button></section>
+  </main>
+
+  <script>
+    const $ = s => document.querySelector(s);
+    const api = (p, opt) => fetch(p, opt).then(r => r.ok ? r.json().catch(() => ({})) : Promise.reject(r));
+    const csv = p => fetch(p).then(r => r.text()).then(t => t.trim().split('\n').map(l => l.split(',')));
+
+    document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+      document.querySelectorAll('nav button').forEach(x => x.classList.remove('active'));
+      document.querySelectorAll('section').forEach(x => x.classList.remove('active'));
+      b.classList.add('active'); $('#' + b.dataset.tab).classList.add('active');
+      if (b.dataset.tab === 'review') loadReview();
+      if (b.dataset.tab === 'bands') loadBands();
+      if (b.dataset.tab === 'places') loadPlaces();
+      if (b.dataset.tab === 'settings') loadSettings();
+    });
+
+    function status() {
+      api('/api/status').then(j => {
+        $('#place').textContent = 'place: ' + j.place;
+        $('#radio').textContent = 'cc1101: ' + (j.cc1101.present ? 'v' + j.cc1101.version : 'absent');
+      });
+    }
+
+    let ws;
+    function connectWs() {
+      ws = new WebSocket('ws://' + location.host + '/ws');
+      ws.onmessage = e => {
+        const j = JSON.parse(e.data), l = $('#feedlist'), d = document.createElement('div');
+        const mhz = (j.freq_hz / 1e6).toFixed(2);
+        d.innerHTML = j.ts + ' · <code>' + mhz + '</code> · ' + j.rssi + ' dB · ' +
+          (j.match ? j.match + ' (' + j.conf + ')' : 'unknown');
+        l.insertBefore(d, l.firstChild);
+      };
+      ws.onclose = () => setTimeout(connectWs, 2000);
+    }
+
+    function loadReview() {
+      csv('/api/captures').then(rows => {
+        const b = $('#reviewbody'); b.innerHTML = '';
+        rows.slice(1).reverse().forEach(r => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = '<td>' + r[0] + '</td><td>' + (r[1] / 1e6).toFixed(2) + '</td><td>' + r[2] +
+            '</td><td>' + (r[8] || '—') + ' ' + (r[10] || '') + '</td>' +
+            '<td><button class="act" onclick="label(\'' + r[12] + '\')">label</button></td>';
+          b.appendChild(tr);
+        });
+      });
+    }
+
+    function label(sub) {
+      const cls = prompt('device_class (e.g. weather, remote, tpms):');
+      if (!cls) return;
+      const fd = new FormData(); fd.append('sub', sub); fd.append('device_class', cls);
+      api('/api/label', { method: 'POST', body: fd }).then(() => loadReview());
+    }
+
+    function loadBands() {
+      csv('/api/occupancy').then(rows => renderTable('#occ', rows));
+      csv('/api/watchlist').then(rows => renderTable('#wl', rows));
+    }
+    function renderTable(sel, rows) {
+      const t = $(sel); t.innerHTML = '';
+      rows.forEach((r, i) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = r.map(c => (i ? '<td>' : '<th>') + c + (i ? '</td>' : '</th>')).join('');
+        t.appendChild(tr);
+      });
+    }
+    function recon(action) {
+      const fd = new FormData(); fd.append('action', action);
+      api('/api/recon', { method: 'POST', body: fd }).then(loadBands);
+    }
+
+    function loadPlaces() {
+      api('/api/places').then(j => {
+        $('#placelist').innerHTML = j.places.map(p =>
+          '<div class="row">' + (p.active ? '★ ' : '') + p.name + ' <code>' + p.id + '</code> ' +
+          (p.active ? '' : '<button class="act" onclick="switchPlace(\'' + p.id + '\')">use</button>') +
+          '</div>').join('');
+      });
+    }
+    function place(action, extra) {
+      const fd = new FormData(); fd.append('action', action);
+      for (const k in extra) fd.append(k, extra[k]);
+      return api('/api/place', { method: 'POST', body: fd });
+    }
+    function createPlace() { const n = $('#newplace').value; if (n) place('create', { name: n }).then(() => { status(); loadPlaces(); }); }
+    function switchPlace(id) { place('switch', { id }).then(() => { status(); loadPlaces(); }); }
+
+    const SETTINGS = [
+      ['mode', 'Mode', ['Recon', 'Sweep', 'Camp']], ['capture_preset', 'Capture', ['OOK650', 'OOK270', '2-FSK', 'Dual']],
+      ['rssi_auto', 'RSSI auto', 'bool'], ['dwell_ms', 'Dwell ms', 'num'], ['survey_minutes', 'Survey min', 'num'],
+      ['auto_classify', 'Auto-classify', 'bool'], ['match_db', 'Match DB', 'bool'], ['tx_enabled', 'TX enabled', 'bool'],
+    ];
+    function loadSettings() {
+      api('/api/settings').then(j => {
+        $('#setform').innerHTML = SETTINGS.map(([k, lbl, kind]) => {
+          let ctl;
+          if (kind === 'bool') ctl = '<input type=checkbox name=' + k + (j[k] ? ' checked' : '') + '>';
+          else if (Array.isArray(kind)) ctl = '<select name=' + k + '>' + kind.map((o, i) => '<option value=' + i + (j[k] == i ? ' selected' : '') + '>' + o + '</option>').join('') + '</select>';
+          else ctl = '<input name=' + k + ' value="' + j[k] + '">';
+          return '<div class="field"><label>' + lbl + '</label>' + ctl + '</div>';
+        }).join('');
+      });
+    }
+    function saveSettings() {
+      const fd = new FormData();
+      SETTINGS.forEach(([k, , kind]) => {
+        const el = $('#setform [name=' + k + ']');
+        if (!el) return;
+        fd.append(k, kind === 'bool' ? (el.checked ? '1' : '0') : el.value);
+      });
+      api('/api/settings', { method: 'POST', body: fd }).then(() => alert('saved'));
+    }
+
+    status(); connectWs(); setInterval(status, 5000);
+  </script>
+</body>
+</html>

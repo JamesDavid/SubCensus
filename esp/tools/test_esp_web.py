@@ -56,6 +56,34 @@ def test_captures_csv_matches_shared_schema(tmp_path):
     assert rows[0]["preset"] == "OOK650"
 
 
+SETTINGS = (
+    '{"place_id":"home","mode":2,"freq_preset":0,"capture_preset":0,"use_watchlist":true,'
+    '"rssi_auto":true,"rssi_threshold":-80,"dwell_ms":80,"capture_max_ms":1500,'
+    '"survey_minutes":15,"auto_classify":true,"match_db":true,"tx_enabled":false,'
+    '"mqtt_enabled":false}'
+)
+PLACES = '{"active":"home","places":[{"id":"home","name":"Home","active":true},' \
+         '{"id":"garage_1a2b","name":"Garage","active":false}]}'
+CANDIDATES = '{"candidates":[{"name":"PT2262 remote","class":"remote","confidence":0.912,"source":"fingerprint"}]}'
+
+
+def test_parse_settings():
+    s = esp_web.parse_settings(SETTINGS)
+    assert s["mode"] == 2 and s["tx_enabled"] is False and s["place_id"] == "home"
+
+
+def test_parse_places():
+    p = esp_web.parse_places(PLACES)
+    assert p["active"] == "home"
+    assert {x["id"] for x in p["places"]} == {"home", "garage_1a2b"}
+    assert any(x["active"] for x in p["places"])
+
+
+def test_parse_candidates():
+    c = esp_web.parse_candidates(CANDIDATES)
+    assert c[0]["class"] == "remote" and c[0]["source"] == "fingerprint"
+
+
 def test_parse_ws_capture():
     m = esp_web.parse_ws_capture(WS_MSG)
     assert m["freq_hz"] == 433920000
