@@ -1,0 +1,9 @@
+{"time":"2026-07-04T12:00:00","model":"Acurite-Tower","id":1234,"channel":"A","freq":433.92,"rssi":-60.5,"snr":12.0,"noise":-72.5,"temperature_C":21.3,"humidity":45}
+{"time":"2026-07-04T12:00:05","model":"Prologue-TH","id":55,"channel":1,"freq":433.92,"rssi":-70.0,"snr":8.0,"temperature_C":19.0,"humidity":52}
+{"time":"2026-07-04T12:00:10","model":"Schrader","type":"TPMS","id":"9ABCDE","freq":315.0,"rssi":-65.0,"snr":10.0,"pressure_kPa":230.0,"temperature_C":22.0}
+{"time":"2026-07-04T12:00:20","model":"Generic-Remote","id":42,"freq":433.92,"rssi":-55.0,"snr":15.0}
+{"time":"2026-07-04T12:00:30","mod":"ASK","freq":433.92,"rssi":-58.0,"snr":9.0,"pulses":42,"codes":["{24}abc123"]}
+{"time":"2026-07-04T12:01:00","model":"Acurite-Tower","id":1234,"channel":"A","freq":433.92,"rssi":-61.0,"snr":11.5,"noise":-72.0,"temperature_C":21.4,"humidity":45}
+{"time":"2026-07-04T12:02:00","model":"Acurite-Tower","id":1234,"channel":"A","freq":433.92,"rssi":-59.5,"snr":12.5,"noise":-72.5,"temperature_C":21.5,"humidity":44}
+{"time":"2026-07-04T12:03:00","model":"Acurite-Tower","id":1234,"channel":"A","freq":433.92,"rssi":-60.0,"snr":12.0,"noise":-72.0,"temperature_C":21.6,"humidity":44}
+{"time":"2026-07-04T12:03:30","type":"stats","stats":{"count":8,"duration":210}}

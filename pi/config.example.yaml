@@ -1,0 +1,23 @@
+# SubCensusPi config (Pi §8). Copy to config.yaml and edit for your host.
+dongles:
+  - serial: ""              # rtl_433 -d :<serial>; empty = first/default dongle
+    freqs: [433.92M, 915M, 315M]
+    gain: auto
+    ppm: 0
+    hop_seconds: 30         # single-dongle hop across the freqs above
+capture_unknowns: false     # save IQ/pulse for undecoded bursts (M4; disk-guarded)
+place: home                 # active Place profile (§9a); stamps all records
+places_dir: /var/lib/subcensuspi/places
+signatures_dir: /var/lib/subcensuspi/signatures   # GLOBAL brain, shared with the Zero
+iq_dir: /var/lib/subcensuspi/iq
+max_iq_gb: 20
+db_path: /var/lib/subcensuspi/census.db
+mqtt:
+  enabled: false
+  host: 127.0.0.1
+  port: 1883
+  ha_discovery: true
+  base_topic: subcensuspi
+web:
+  host: 0.0.0.0
+  port: 8080
