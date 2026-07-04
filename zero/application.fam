@@ -13,8 +13,7 @@ App(
     "and replay-to-identify. Passive monitoring; explicit TX only.",
     # shared/core is compiled via the unity TU subcensus_core.c (see that file) — fbt can't
     # reference ../ sources, so we keep everything inside the app tree.
-    sources=[
-        "*.c",
-        "scenes/*.c",
-    ],
+    # NB: fbt globs "*.c" recursively, so scenes/*.c is already included — don't list it
+    # again or every scene compiles twice (duplicate-symbol link errors).
+    sources=["*.c"],
 )
