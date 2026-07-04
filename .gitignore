@@ -47,3 +47,4 @@ Thumbs.db
 # (place folders / captures / SD-card dumps if ever pulled locally)
 *.sub.bak
 scratch/
+esp/src/idf_component.yml
