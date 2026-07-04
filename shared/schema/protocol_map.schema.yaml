@@ -1,0 +1,25 @@
+name: protocol_map
+description: Decoded-protocol / device-class -> friendly name + class map for decodable cases (System §6 tier 1).
+system_ref: "System §6"
+scope: global
+columns:
+  - name: protocol
+    type: str
+    required: true
+    desc: Decoder protocol name/id (Flipper SubGhz registry or rtl_433 device name/number).
+  - name: friendly_name
+    type: str
+    required: true
+    desc: Human-readable device/family name proposed on a decode match.
+  - name: device_class
+    type: device_class
+    required: true
+    desc: device_class from shared/taxonomy.yaml.
+  - name: typical_use
+    type: str
+    required: false
+    desc: Short note on typical use (e.g. "garage remote", "tire pressure sensor").
+  - name: notes
+    type: str
+    required: false
+    desc: Free-form reference notes (freq/modulation/bit-length hints, caveats).

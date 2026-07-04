@@ -1,0 +1,59 @@
+# shared/taxonomy.yaml — device_class vocabulary (System §5)
+#
+# SINGLE SOURCE OF TRUTH for the label taxonomy. Consumed by every sensor:
+#   - the Zero's `zero/census_taxonomy.h` is GENERATED from this file (System §10)
+#   - the Pi/Esp taxonomy loaders are generated/derived from it too
+# A change here is regenerated into every consumer in the SAME commit (System §10),
+# so the tools cannot drift.
+#
+# STABILITY RULE: `id` strings are what get written to the `label`/`device_class`
+# columns on disk (System §9). They are the durable identity. The generated C enum
+# uses list order for its numeric values, so:
+#   - APPEND new classes at the END (never reorder, never delete an id)
+#   - to retire a class, keep the id and mark it `deprecated: true`
+# `unknown` and `other` are required sentinels and must remain present.
+version: 1
+
+classes:
+  - id: garage
+    name: Garage door
+    notes: Garage/gate openers (fixed and rolling code).
+  - id: car-fob
+    name: Car key fob
+    notes: Vehicle remote keyless entry.
+  - id: tpms
+    name: Tire pressure sensor
+    notes: Tire-pressure monitoring; usually 2-FSK, motion-triggered then silent.
+  - id: weather
+    name: Weather / environment sensor
+    notes: Temp/humidity/rain/wind sensors; typically periodic ~30-60 s beacons.
+  - id: doorbell
+    name: Doorbell
+    notes: Wireless doorbell push buttons and chimes.
+  - id: pir-motion
+    name: PIR / motion sensor
+    notes: Passive-infrared and other motion detectors; event-driven.
+  - id: energy-meter
+    name: Energy meter
+    notes: Electricity meters and power-reporting devices.
+  - id: water/gas-meter
+    name: Water / gas meter
+    notes: Utility water and gas meters; periodic ~5 min / hourly.
+  - id: remote
+    name: Remote control
+    notes: Generic remotes (PT2262-family and similar fixed-code button remotes).
+  - id: thermostat
+    name: Thermostat
+    notes: HVAC thermostats and temperature controllers.
+  - id: smart-home
+    name: Smart-home device
+    notes: Misc smart-home RF (switches, sensors, hubs) not covered by a tighter class.
+  - id: beacon
+    name: Beacon
+    notes: Periodic identity/presence beacons.
+  - id: unknown
+    name: Unknown
+    notes: Required sentinel. Captured but not yet identified.
+  - id: other
+    name: Other
+    notes: Required sentinel. Identified but outside the vocabulary above.

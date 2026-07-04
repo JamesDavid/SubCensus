@@ -1,0 +1,76 @@
+name: fingerprints
+description: Feature-vector library for raw/undecodable captures and generic-protocol disambiguation (the k-NN brain).
+system_ref: "System §7"
+scope: global
+columns:
+  - name: id
+    type: str
+    required: true
+    desc: Stable unique id for this fingerprint row.
+  - name: freq_bin
+    type: int
+    required: true
+    desc: Carrier frequency binned (e.g. 5 kHz bins), in Hz. Hard k-NN gate (System §6).
+  - name: modulation
+    type: enum
+    required: true
+    values: [OOK, 2-FSK, TPMS-preset]
+    desc: Modulation class. Hard k-NN gate (System §6).
+  - name: sym_dur_us_1
+    type: int
+    required: true
+    desc: 1st dominant symbol duration (us), from clustering the pulse-width histogram.
+  - name: sym_dur_us_2
+    type: int
+    required: false
+    desc: 2nd dominant symbol duration (us); empty if fewer than 2 clusters.
+  - name: sym_dur_us_3
+    type: int
+    required: false
+    desc: 3rd dominant symbol duration (us); empty if fewer than 3 clusters.
+  - name: n_symbols
+    type: int
+    required: true
+    desc: Number of symbols in the analyzed frame.
+  - name: est_bitrate
+    type: int
+    required: true
+    desc: Estimated bit rate (bits/s).
+  - name: preamble_len
+    type: int
+    required: true
+    desc: Length of the leading regular pulse run (preamble).
+  - name: repeat_count
+    type: int
+    required: true
+    desc: Frames per event (a remote fires the same frame many times).
+  - name: device_name
+    type: str
+    required: false
+    desc: Friendly device/family name (empty for an unlabeled fingerprint).
+  - name: device_class
+    type: device_class
+    required: true
+    desc: device_class from shared/taxonomy.yaml.
+  - name: source
+    type: enum
+    required: true
+    values: [seed, user, tool]
+    desc: Provenance. `user` = active-learning confirm (System §6); `seed`/`tool` = built.
+  - name: cadence_class
+    type: enum
+    required: false
+    values: [periodic, quasi-periodic, event-driven, near-continuous, seen-once]
+    desc: Temporal fingerprint class (System §7a). Soft feature; may be empty.
+  - name: period_s
+    type: float
+    required: false
+    desc: Estimated fundamental period (s); empty for event-driven/seen-once.
+  - name: period_regularity
+    type: float
+    required: false
+    desc: 0-1, 1 = metronomic (System §7a). Empty until cadence is estimated.
+  - name: cadence_samples
+    type: int
+    required: false
+    desc: Number of inter-arrival intervals behind the cadence estimate (evidence weight).

@@ -1,0 +1,62 @@
+name: census_log
+description: SubCensusZero per-capture index (Zero §5.4). Catalog core (System §9) realized with Zero extensions; this is the exact header the FAP writes.
+system_ref: "Zero §5.4 (extends System §9)"
+scope: per-place
+columns:
+  - name: ts_iso
+    type: ts
+    required: true
+    desc: Capture wall-clock time from the RTC (System §5.2).
+  - name: freq_hz
+    type: int
+    required: true
+    desc: Capture frequency (Hz).
+  - name: rssi_dbm
+    type: float
+    required: true
+    desc: Peak RSSI during the capture (dBm).
+  - name: duration_ms
+    type: int
+    required: true
+    desc: Capture window duration (ms).
+  - name: preset
+    type: str
+    required: true
+    desc: Capture preset actually used (SDK preset name; the resolved side of a Dual capture).
+  - name: fsk_suspected
+    type: bool
+    required: true
+    desc: 1 when OOK decode failed on a strong signal (System/Zero §5.3). CSV 0/1.
+  - name: protocol
+    type: str
+    required: false
+    desc: Decoded protocol name (empty when undecoded).
+  - name: key
+    type: str
+    required: false
+    desc: Decoded key/id field for disambiguation (empty when undecoded).
+  - name: match_name
+    type: str
+    required: false
+    desc: Best candidate name from the brain (System §6). Advisory.
+  - name: match_class
+    type: device_class
+    required: false
+    desc: Best candidate device_class.
+  - name: match_conf
+    type: float
+    required: false
+    desc: Match confidence 0-1.
+  - name: match_source
+    type: enum
+    required: false
+    values: [decoder, fingerprint, user]
+    desc: How the match was produced (System §6).
+  - name: sub_file
+    type: str
+    required: false
+    desc: Relative path of the captured .sub (empty for an RSSI-only "blip" row, Zero §7).
+  - name: label
+    type: device_class
+    required: false
+    desc: User-confirmed final call (empty until confirmed in Review). Never auto-set.

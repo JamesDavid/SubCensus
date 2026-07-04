@@ -1,0 +1,72 @@
+name: catalog_record
+description: Shared CORE catalog fields common to all sensors (System §9). Platforms extend but never drop these; the analysis tools rely on them.
+system_ref: "System §9"
+scope: catalog
+columns:
+  - name: ts
+    type: ts
+    required: true
+    desc: Observation timestamp (ISO wall-clock).
+  - name: freq_hz
+    type: int
+    required: true
+    desc: Frequency (Hz).
+  - name: modulation
+    type: enum
+    required: true
+    values: [OOK, 2-FSK, TPMS-preset]
+    desc: Modulation class.
+  - name: device_class
+    type: device_class
+    required: false
+    desc: device_class from shared/taxonomy.yaml (empty until classified).
+  - name: first_seen
+    type: ts
+    required: false
+    desc: First reception of this grouped device.
+  - name: last_seen
+    type: ts
+    required: false
+    desc: Most recent reception of this grouped device.
+  - name: count
+    type: int
+    required: false
+    desc: Reception count for this grouped device.
+  - name: match_name
+    type: str
+    required: false
+    desc: Best candidate device/family name from the brain (System §6). Advisory only.
+  - name: match_class
+    type: device_class
+    required: false
+    desc: Best candidate device_class.
+  - name: match_conf
+    type: float
+    required: false
+    desc: Match confidence 0-1.
+  - name: match_source
+    type: enum
+    required: false
+    values: [decoder, fingerprint, user]
+    desc: How the match was produced (System §6).
+  - name: label
+    type: device_class
+    required: false
+    desc: User-confirmed final call (empty until confirmed). Never auto-set (System §6).
+  - name: cadence_class
+    type: enum
+    required: false
+    values: [periodic, quasi-periodic, event-driven, near-continuous, seen-once]
+    desc: Per-device temporal fingerprint (System §7a).
+  - name: period_s
+    type: float
+    required: false
+    desc: Estimated fundamental period (s).
+  - name: period_regularity
+    type: float
+    required: false
+    desc: 0-1, 1 = metronomic (System §7a).
+  - name: cadence_samples
+    type: int
+    required: false
+    desc: Inter-arrival intervals behind the cadence estimate.

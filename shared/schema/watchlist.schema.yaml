@@ -1,0 +1,27 @@
+name: watchlist
+description: Per-place Recon Stage C output. Sweep/Camp consume it; Pi uses it to prioritize bands (System §9).
+system_ref: "System §9"
+scope: per-place
+columns:
+  - name: freq_hz
+    type: int
+    required: true
+    desc: Watched frequency (Hz), snapped to a sensible channel.
+  - name: modulation
+    type: enum
+    required: true
+    values: [OOK, 2-FSK, TPMS-preset]
+    desc: Modulation resolved by Recon Stage B (OOK/FSK sniff).
+  - name: threshold_dbm
+    type: float
+    required: true
+    desc: Per-band capture threshold (dBm), adaptive from Stage A noise floor.
+  - name: occupancy
+    type: float
+    required: true
+    desc: Occupancy fraction carried from occupancy.csv (0-1); drives the Auto=busiest pick.
+  - name: source
+    type: enum
+    required: true
+    values: [recon, user-pin, user-exclude]
+    desc: Provenance. user-pin/user-exclude survive re-runs and Reset (System §9).

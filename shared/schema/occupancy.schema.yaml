@@ -1,0 +1,29 @@
+name: occupancy
+description: Per-place Recon Stage A activity map (stepped-RSSI occupancy survey). Cumulative across passes (System §9).
+system_ref: "System §9"
+scope: per-place
+columns:
+  - name: freq_hz
+    type: int
+    required: true
+    desc: Bin center frequency (Hz).
+  - name: noise_floor
+    type: float
+    required: true
+    desc: Rolling noise-floor estimate for this bin (dBm).
+  - name: peak_rssi
+    type: float
+    required: true
+    desc: Max/rolling peak RSSI seen in this bin (dBm).
+  - name: occupancy
+    type: float
+    required: true
+    desc: Fraction of samples above floor+margin (0-1).
+  - name: crossings
+    type: int
+    required: true
+    desc: Threshold-crossing count (summed across passes).
+  - name: last_seen
+    type: ts
+    required: true
+    desc: ISO timestamp of the most recent activity in this bin.
