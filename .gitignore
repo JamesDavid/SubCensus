@@ -1,0 +1,43 @@
+# --- ufbt / Flipper build ---
+zero/.ufbt/
+zero/dist/
+zero/build/
+*.fap
+*.fap.debug
+
+# --- C build artifacts (host core tests) ---
+test/core/build/
+*.o
+*.obj
+*.a
+*.exe
+a.out
+*.gcda
+*.gcno
+*.gcov
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+.env
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# --- runtime data that should never be committed ---
+# (place folders / captures / SD-card dumps if ever pulled locally)
+*.sub.bak
+scratch/
