@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SubCensusPi</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; background: #0f1115; color: #e6e6e6; }
+    header { padding: 12px 16px; background: #171a21; border-bottom: 1px solid #2a2f3a; }
+    h1 { font-size: 18px; margin: 0; } .muted { color: #8b93a1; font-size: 12px; }
+    main { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; padding: 16px; }
+    @media (max-width: 760px) { main { grid-template-columns: 1fr; } }
+    section { background: #171a21; border: 1px solid #2a2f3a; border-radius: 8px; padding: 12px; }
+    h2 { font-size: 14px; margin: 0 0 8px; color: #a7b0c0; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid #232833; }
+    th { color: #8b93a1; font-weight: 600; }
+    input, select { background: #0f1115; color: #e6e6e6; border: 1px solid #2a2f3a; border-radius: 4px; padding: 2px 4px; font-size: 12px; }
+    button { background: #2d6cdf; color: #fff; border: 0; border-radius: 4px; padding: 3px 8px; font-size: 12px; cursor: pointer; }
+    #feed div { font-size: 12px; padding: 3px 0; border-bottom: 1px solid #232833; }
+    code { color: #9fd0ff; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>SubCensusPi <span class="muted">place: {{ place or "all" }}</span></h1>
+    <div class="muted">Wideband RTL-SDR ISM census — RX only. {{ devices|length }} devices.</div>
+  </header>
+  <main>
+    <section>
+      <h2>Devices</h2>
+      <table id="devices">
+        <thead><tr><th>Model</th><th>ID/Ch</th><th>Band</th><th>Count</th><th>SNR</th><th>Label / Room / Class</th></tr></thead>
+        <tbody>
+        {% for d in devices %}
+          <tr>
+            <td>{{ d.model }}</td>
+            <td>{{ d.dev_id }}{% if d.channel %}/{{ d.channel }}{% endif %}</td>
+            <td>{{ "%.2f"|format((d.typical_freq_hz or 0) / 1e6) }} MHz</td>
+            <td>{{ d.count }}</td>
+            <td>{{ "%.1f"|format(d.avg_snr) if d.avg_snr is not none else "—" }}</td>
+            <td>
+              <form class="label-form" data-id="{{ d.device_id }}">
+                <input name="label" value="{{ d.label or '' }}" placeholder="label" size="10">
+                <input name="room" value="{{ d.room or '' }}" placeholder="room" size="7">
+                <select name="device_class">
+                  <option value="">—</option>
+                  {% for c in classes %}<option value="{{ c }}" {% if d.device_class == c %}selected{% endif %}>{{ c }}</option>{% endfor %}
+                </select>
+                <button type="submit">save</button>
+              </form>
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="6" class="muted">No devices yet — run the collector.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </section>
+    <section>
+      <h2>Live feed</h2>
+      <div id="feed"></div>
+    </section>
+  </main>
+  <script>
+    document.querySelectorAll('.label-form').forEach(function (form) {
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        const id = form.dataset.id;
+        fetch('/api/device/' + id + '/label', { method: 'POST', body: new FormData(form) })
+          .then(function (r) { if (!r.ok) alert('save failed'); });
+      });
+    });
+    function renderFeed(events) {
+      const feed = document.getElementById('feed');
+      feed.innerHTML = events.map(function (e) {
+        const mhz = ((e.freq_hz || 0) / 1e6).toFixed(2);
+        const name = e.label || e.model || 'unknown';
+        return '<div>' + (e.ts || '') + ' · <code>' + mhz + '</code> · ' + name +
+               (e.snr != null ? ' · ' + e.snr + ' dB' : '') + '</div>';
+      }).join('');
+    }
+    function poll() {
+      fetch('/api/events?limit=30').then(function (r) { return r.json(); }).then(renderFeed).catch(function () {});
+    }
+    poll();
+    setInterval(poll, 4000);
+  </script>
+</body>
+</html>
