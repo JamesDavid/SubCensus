@@ -1,0 +1,65 @@
+protocol,friendly_name,device_class,typical_use,notes
+Abarth-124Spider,Abarth 124 TPMS,tpms,tire pressure,433 FSK
+Acurite-5n1,Acurite 5-in-1,weather,weather station,433.92 OOK
+Acurite-606TX,Acurite 606TX,weather,temperature sensor,433.92 OOK
+Acurite-Tower,Acurite tower sensor,weather,temp/humidity ~30-60s,433.92 OOK
+Ambient-Weather,Ambient Weather,weather,weather sensor,915 OOK
+Ansonic,Ansonic,garage,gate remote,433.92/434.075 OOK
+BFT Mitto,BFT Mitto,garage,gate remote,433.92 rolling
+Bresser-3CH,Bresser 3CH,weather,temp/humidity sensor,433.92 OOK
+Bresser-5in1,Bresser 5-in-1,weather,weather station,868 FSK
+CAME,CAME gate,garage,gate remote,433.92/868 OOK
+CAME Atomo,CAME Atomo gate,garage,gate remote,433.92 rolling
+CAME TWEE,CAME TWEE gate,garage,gate remote,433.92 OOK
+Chamberlain,Chamberlain/LiftMaster,garage,garage door,300-390 OOK
+Citroen,Citroen TPMS,tpms,tire pressure,433 FSK
+Clemsa,Clemsa,garage,gate remote,433.92 OOK
+Doorhan,DoorHan,garage,gate/barrier remote,433.92 rolling
+ERT-IDM,Utility meter (ERT IDM),energy-meter,electric meter,915 FSK
+ERT-SCM,Utility meter (ERT SCM),energy-meter,electric meter,915 FSK
+FAAC SLH,FAAC SLH,garage,gate remote,433/868 rolling
+Fineoffset-WH2,Fine Offset WH2,weather,temp/humidity sensor,433.92 OOK
+Fineoffset-WH24,Fine Offset WH24,weather,weather station,433/915 FSK
+Ford,Ford TPMS,tpms,tire pressure,315/433 FSK
+GT-WT02,Globaltronics GT-WT,weather,temp/humidity sensor,433.92 OOK
+GateTX,Gate-TX,garage,gate remote,433.92 OOK
+Holtek,Holtek HT12x remote,remote,generic OOK remote,433.92 OOK
+Holtek_HT12X,Holtek HT12x,remote,generic OOK remote,315/433 OOK
+Honeywell,Honeywell Security,pir-motion,door/window/motion sensor,345 FSK
+Honeywell-Security,Honeywell Security,pir-motion,security sensor,345 FSK
+Hormann HSM,Hormann HSM,garage,garage door,868 rolling
+Interlogix,Interlogix/GE,pir-motion,door/window/motion sensor,319.5 OOK
+Intertechno_V3,Intertechno V3,smart-home,RF power switch,433.92 OOK
+KIA,KIA fob,car-fob,vehicle remote,433.92 rolling
+KeeLoq,KeeLoq rolling,garage,gate/car rolling code,300-868 OOK/FSK
+LaCrosse-TX,LaCrosse TX,weather,temp/humidity sensor,433.92 OOK
+LaCrosse-TX141THBv2,LaCrosse TX141TH,weather,temp/humidity sensor,433.92 OOK
+Linear,Linear opener,garage,gate/garage remote,300-318 OOK
+Linear Delta 3,Linear Delta-3,garage,gate remote,310 OOK
+Magellan,Magellan,pir-motion,security sensor,433.92 OOK
+Marantec,Marantec,garage,garage door,433/868 OOK
+Megacode,Linear MegaCode,garage,gate/garage remote,318 OOK
+Neptune-R900,Neptune R900,water/gas-meter,water meter,915 FSK
+Nero Radio,Nero Radio,smart-home,RF switch/remote,433.92 OOK
+Nexus-TH,Nexus temp/hum,weather,temp/humidity sensor,433.92 OOK
+Nice Flo,Nice FLO gate,garage,gate/garage remote,433.92 OOK fixed code
+Nice FloR-S,Nice FloR-S gate,garage,gate remote,433.92 OOK rolling code
+Oregon-Scientific,Oregon Scientific,weather,weather sensor,433.92 OOK
+PT2260,PT2260 remote,remote,generic OOK remote,433.92 OOK
+Power Smart,Power Smart,smart-home,RF switch,433.92 OOK
+Princeton,PT2262 remote,remote,generic OOK button remote,433.92 OOK fixed code
+Prologue-TH,Prologue temp/hum,weather,temp/humidity sensor,433.92 OOK
+Renault,Renault TPMS,tpms,tire pressure,433 FSK
+SMC5326,SMC5326 remote,garage,gate/garage remote,330 OOK
+Schrader,Schrader TPMS,tpms,"tire pressure, motion-triggered",315/433 FSK
+Schrader-EG53MA4,Schrader EG53MA4 TPMS,tpms,tire pressure,315 FSK
+Secplus-v1,Security+ 1.0,garage,garage door (Sec+ 1.0),310/390 OOK
+Secplus-v2,Security+ 2.0,garage,garage door (Sec+ 2.0),310/315/390 FSK
+Somfy Keytis,Somfy Keytis,garage,gate remote,433.42 rolling
+Somfy Telis,Somfy Telis,garage,shutter/gate remote,433.42 rolling
+Star Line,StarLine alarm,car-fob,car alarm remote,433.92 rolling
+TFA-Twin-Plus,TFA Twin Plus,weather,temp/humidity sensor,433.92 OOK
+Toyota,Toyota TPMS,tpms,tire pressure,315/433 FSK
+X10,X10 RF,smart-home,home automation,310/433 OOK
+X10-Security,X10 Security,pir-motion,security sensor,310 OOK
+inFactory-TH,inFactory temp/hum,weather,temp/humidity sensor,433.92 OOK

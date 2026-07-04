@@ -1,0 +1,1 @@
+id,freq_bin,modulation,sym_dur_us_1,sym_dur_us_2,sym_dur_us_3,n_symbols,est_bitrate,preamble_len,repeat_count,device_name,device_class,source,cadence_class,period_s,period_regularity,cadence_samples
