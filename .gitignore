@@ -21,6 +21,9 @@ a.out
 esp/.pio/
 .pio/
 esp/test/build/
+# web flasher firmware image is built by CI (or build_merged.py) — never committed
+esp/flasher/firmware/
+_site/
 
 # --- Python ---
 __pycache__/

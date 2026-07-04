@@ -9,7 +9,8 @@ hardware demands it.
 - **SubCensusPi** — stationary RTL-SDR / Raspberry Pi service (wideband `rtl_433`; web
   dashboard; RX-only). Build: [`pi/README.md`](./pi/README.md).
 - **SubCensusEsp** — headless ESP32 + CC1101 node (same capture model as the Zero; served
-  over WiFi). Build: [`esp/README.md`](./esp/README.md).
+  over WiFi). Build: [`esp/README.md`](./esp/README.md) · **flash from your browser** (no
+  toolchain) with the [web flasher](./esp/flasher/) → GitHub Pages.
 
 They share the whole **data + intelligence layer** and differ only in capture/UI/build.
 The rule of thumb (System §3): **unify the brain and bookkeeping; keep the senses and

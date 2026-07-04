@@ -6,6 +6,14 @@ cleanest fingerprint parity of the three sensors. Headless: review/label/config 
 browser over WiFi. Spec: [`../docs/SubCensusEsp_Spec.md`](../docs/SubCensusEsp_Spec.md); shared
 contract: [`../docs/SubCensus_System.md`](../docs/SubCensus_System.md). See [`CLAUDE.md`](./CLAUDE.md).
 
+## Flash it from your browser
+
+No toolchain needed — a one-click **web flasher** (ESP Web Tools / Web Serial) lives in
+[`flasher/`](./flasher/) and deploys to GitHub Pages via CI. Once Pages is enabled
+(Settings → Pages → Source: GitHub Actions), open **https://jamesdavid.github.io/SubCensus/**
+in Chrome/Edge, wire the CC1101 (diagram + pin map on the page), and click Install. See
+[`flasher/README.md`](./flasher/README.md).
+
 ## Build (PlatformIO)
 
 Platform pinned to `espressif32 @ 6.5.0` (Arduino core 2.0.x) for a reliable framework fetch.

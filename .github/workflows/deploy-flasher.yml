@@ -1,0 +1,56 @@
+name: Deploy ESP web flasher to GitHub Pages
+
+# Builds the SubCensusEsp firmware + LittleFS web UI, merges them into one flash image, and
+# publishes the ESP Web Tools flasher (esp/flasher/) to GitHub Pages. No binaries are committed
+# — the flasher and the source stay in lockstep.
+#
+# One-time setup: repo Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "esp/**"
+      - "shared/core/**"
+      - ".github/workflows/deploy-flasher.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+      - name: Build firmware + filesystem and merge the flash image
+        run: python esp/flasher/build_merged.py
+      - name: Assemble the Pages site
+        run: |
+          mkdir -p _site
+          cp esp/flasher/index.html esp/flasher/manifest.json _site/
+          cp -r esp/flasher/firmware _site/firmware
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

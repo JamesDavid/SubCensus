@@ -1,0 +1,15 @@
+{
+  "name": "SubCensusEsp",
+  "version": "0.1",
+  "home_assistant_domain": "",
+  "funding_url": "",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32",
+      "parts": [
+        { "path": "firmware/subcensusesp.bin", "offset": 0 }
+      ]
+    }
+  ]
+}

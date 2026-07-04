@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SubCensusEsp — Web Flasher</title>
+  <meta name="description" content="Flash the SubCensusEsp firmware (ESP32 + CC1101 ISM census node) straight from your browser. Includes CC1101 wiring.">
+  <style>
+    :root { --bg:#0f1115; --panel:#171a21; --line:#2a2f3a; --fg:#e6e6e6; --mut:#8b93a1; --acc:#2d6cdf; --warn:#e0a03a; --danger:#d9534f; --ok:#3fb27f; --code:#9fd0ff; }
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; background: var(--bg); color: var(--fg); line-height: 1.55; }
+    a { color: var(--code); }
+    .wrap { max-width: 860px; margin: 0 auto; padding: 0 20px 80px; }
+    header { text-align: center; padding: 48px 20px 24px; background: radial-gradient(1200px 300px at 50% -80px, #1b2436, transparent); border-bottom: 1px solid var(--line); }
+    header h1 { margin: 0 0 6px; font-size: 30px; letter-spacing: -.5px; }
+    header p { margin: 0 auto; max-width: 620px; color: var(--mut); }
+    .flash { text-align: center; margin: 28px 0 8px; }
+    .flashbtn { font: 600 16px system-ui; color: #fff; background: var(--acc); border: 0;
+      border-radius: 10px; padding: 13px 26px; cursor: pointer; box-shadow: 0 6px 20px rgba(45,108,223,.35); }
+    .flashbtn:hover { background: #3a78e6; }
+    esp-web-install-button[install-unsupported] .flashbtn,
+    esp-web-install-button[install-unsupported] .avail { display: none; }
+    .slotmsg { max-width: 560px; margin: 16px auto; text-align: left; }
+    .pill { display: inline-block; font-size: 12px; color: var(--mut); border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; margin: 4px; }
+    section { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; margin: 20px 0; }
+    h2 { font-size: 18px; margin: 0 0 12px; }
+    h3 { font-size: 14px; color: var(--mut); text-transform: uppercase; letter-spacing: .06em; margin: 20px 0 8px; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 6px 0; }
+    th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); }
+    th { color: var(--mut); font-weight: 600; }
+    td code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--code); }
+    ol { padding-left: 20px; } ol li { margin: 8px 0; }
+    .note { border-left: 3px solid var(--acc); padding: 8px 12px; margin: 12px 0; background: #10141c; border-radius: 0 8px 8px 0; }
+    .note.warn { border-color: var(--warn); } .note.danger { border-color: var(--danger); }
+    .note b { color: var(--fg); }
+    figure { margin: 0; overflow-x: auto; }
+    figcaption { color: var(--mut); font-size: 12px; text-align: center; margin-top: 8px; }
+    svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+    footer { text-align: center; color: var(--mut); font-size: 13px; margin-top: 32px; }
+    .kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 1px 6px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>SubCensusEsp — Web Flasher</h1>
+    <p>Flash the headless <strong>ESP32 + CC1101</strong> ISM-band census node right from your browser.
+       No IDE, no toolchain — just a USB cable.</p>
+    <div class="flash">
+      <esp-web-install-button manifest="./manifest.json">
+        <button slot="activate" class="flashbtn">⚡ Install SubCensusEsp</button>
+        <div slot="unsupported" class="note warn slotmsg">
+          <b>Your browser can't flash over USB.</b> Web Serial is only available in
+          <b>Chrome</b> or <b>Edge</b> on desktop (Windows / macOS / Linux / ChromeOS).
+          Open this page there, or flash from the command line (see the repo).
+        </div>
+        <div slot="not-allowed" class="note danger slotmsg">
+          <b>This page must be served over HTTPS</b> (or <span class="mono">http://localhost</span>)
+          for Web Serial. The GitHub Pages URL is HTTPS, so use that.
+        </div>
+      </esp-web-install-button>
+      <div class="avail" style="margin-top:14px">
+        <span class="pill">Chrome / Edge desktop</span>
+        <span class="pill">ESP32 (WROOM-32)</span>
+        <span class="pill">~4 MB flash · &lt;1 min</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <section>
+      <h2>Before you flash</h2>
+      <ol>
+        <li><b>Wire the CC1101 to the ESP32</b> (see the wiring below). You can flash the bare
+          board first and wire the radio after — the firmware boots fine without it (the web
+          UI shows <span class="mono">cc1101: absent</span> until it's connected).</li>
+        <li>Plug the ESP32 into your computer with a <b>data-capable</b> USB cable (many cheap
+          cables are charge-only and won't enumerate a serial port).</li>
+        <li>Install the USB-UART driver for your board if needed:
+          <a href="https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers" target="_blank" rel="noopener">CP210x</a>
+          (most WROOM devkits) or
+          <a href="https://www.wch-ic.com/downloads/CH341SER_ZIP.html" target="_blank" rel="noopener">CH340</a>.</li>
+        <li>Close any other program using the serial port (Arduino IDE / PlatformIO monitor / <span class="mono">screen</span>).</li>
+        <li>Click <b>Install SubCensusEsp</b> above, pick your board's serial port, and confirm.
+          The flasher erases the chip and writes firmware + the web-UI filesystem (~1 min).</li>
+      </ol>
+      <div class="note">The button flashes a <b>merged image</b> (bootloader + partitions +
+        app + LittleFS web UI) built by CI from the exact firmware in the repo, so the flasher
+        and the source never drift.</div>
+    </section>
+
+    <section>
+      <h2>Wiring the CC1101</h2>
+      <p>The CC1101 talks to the ESP32 over the <b>VSPI</b> hardware bus. Capture rides
+        <b>GDO0</b> (hardware RMT edge-timing), independent of WiFi/web activity.</p>
+
+      <div class="note danger"><b>3.3 V only.</b> The CC1101 is a 3.3 V part — power it from the
+        ESP32 <span class="mono">3V3</span> pin, <b>never 5 V / VIN</b>. Logic is 3.3 V on both
+        sides, so <b>no level shifter</b> is needed.</div>
+
+      <figure>
+        <svg viewBox="0 0 640 380" role="img" aria-label="CC1101 to ESP32 VSPI wiring diagram">
+          <style>
+            .lbl{fill:#e6e6e6;font:600 13px system-ui}
+            .pin{fill:#a7b0c0;font:12px ui-monospace,monospace}
+            .wire{stroke-width:2;fill:none}
+            .wt{font:11px ui-monospace,monospace}
+          </style>
+          <!-- CC1101 -->
+          <rect x="30" y="40" width="180" height="300" rx="10" fill="#1b2130" stroke="#3a4152" stroke-width="1.5"/>
+          <text x="120" y="66" text-anchor="middle" class="lbl">CC1101</text>
+          <!-- ESP32 -->
+          <rect x="430" y="40" width="180" height="300" rx="10" fill="#1b2130" stroke="#3a4152" stroke-width="1.5"/>
+          <text x="520" y="66" text-anchor="middle" class="lbl">ESP32 (VSPI)</text>
+
+          <!-- rows: y positions -->
+          <!-- VCC -->
+          <text x="46" y="104" class="pin">VCC</text><text x="594" y="104" text-anchor="end" class="pin">3V3</text>
+          <line x1="82" y1="100" x2="558" y2="100" class="wire" stroke="#d9534f"/><text x="320" y="94" text-anchor="middle" class="wt" fill="#d9534f">3.3 V</text>
+          <!-- GND -->
+          <text x="46" y="140" class="pin">GND</text><text x="594" y="140" text-anchor="end" class="pin">GND</text>
+          <line x1="82" y1="136" x2="558" y2="136" class="wire" stroke="#8b93a1"/>
+          <!-- SCK -->
+          <text x="46" y="176" class="pin">SCK</text><text x="594" y="176" text-anchor="end" class="pin">GPIO 18</text>
+          <line x1="82" y1="172" x2="558" y2="172" class="wire" stroke="#2d6cdf"/>
+          <!-- MOSI -->
+          <text x="46" y="212" class="pin">MOSI / SI</text><text x="594" y="212" text-anchor="end" class="pin">GPIO 23</text>
+          <line x1="110" y1="208" x2="558" y2="208" class="wire" stroke="#2d6cdf"/>
+          <!-- MISO -->
+          <text x="46" y="248" class="pin">MISO / SO</text><text x="594" y="248" text-anchor="end" class="pin">GPIO 19</text>
+          <line x1="110" y1="244" x2="558" y2="244" class="wire" stroke="#2d6cdf"/>
+          <!-- CSN -->
+          <text x="46" y="284" class="pin">CSN / CS</text><text x="594" y="284" text-anchor="end" class="pin">GPIO 5</text>
+          <line x1="104" y1="280" x2="558" y2="280" class="wire" stroke="#2d6cdf"/>
+          <!-- GDO0 -->
+          <text x="46" y="320" class="pin">GDO0</text><text x="594" y="320" text-anchor="end" class="pin">GPIO 34</text>
+          <line x1="86" y1="316" x2="558" y2="316" class="wire" stroke="#3fb27f"/><text x="320" y="310" text-anchor="middle" class="wt" fill="#3fb27f">RX data · RMT capture</text>
+        </svg>
+        <figcaption>CC1101 ⇄ ESP32 over VSPI. GDO2 (→ GPIO 35) is optional. GPIO 34 is
+          input-only — perfect for GDO0 edge capture.</figcaption>
+      </figure>
+
+      <h3>Pin map</h3>
+      <table>
+        <thead><tr><th>CC1101</th><th>ESP32 GPIO</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td>VCC</td><td class="mono">3V3</td><td><b style="color:#e0a03a">3.3 V only — not 5 V</b></td></tr>
+          <tr><td>GND</td><td class="mono">GND</td><td>Ground</td></tr>
+          <tr><td>SCK</td><td class="mono">18</td><td>VSPI clock</td></tr>
+          <tr><td>MOSI (SI)</td><td class="mono">23</td><td>VSPI data to radio</td></tr>
+          <tr><td>MISO (SO)</td><td class="mono">19</td><td>VSPI data from radio</td></tr>
+          <tr><td>CSN (CS)</td><td class="mono">5</td><td>Chip select</td></tr>
+          <tr><td>GDO0</td><td class="mono">34</td><td>RX data / RMT edge capture (input-only pin)</td></tr>
+          <tr><td>GDO2</td><td class="mono">35</td><td>Optional (input-only)</td></tr>
+          <tr><td>ANT</td><td>—</td><td>Antenna tuned to your band (~433 or ~915 MHz)</td></tr>
+        </tbody>
+      </table>
+      <div class="note warn">Module pin labels vary. On <b>8-pin SPI</b> modules, <b>SI = MOSI</b>
+        and <b>SO = MISO</b>. Some boards silk-print <span class="mono">GD0</span>/<span class="mono">GD2</span>
+        for GDO0/GDO2. Keep SPI wires short; solder a whip/coil antenna to <span class="mono">ANT</span>
+        for real range.</div>
+      <div class="note"><b>Avoid strapping pins.</b> The map deliberately steers clear of GPIO
+        0/2/12/15. GPIO 34/35 are input-only (fine for the GDO capture/status lines).</div>
+    </section>
+
+    <section>
+      <h2>First boot &amp; setup</h2>
+      <ol>
+        <li>After flashing, the node reboots and starts serving its UI over WiFi (Esp §5).</li>
+        <li>With no WiFi credentials yet, it brings up a setup access point named
+          <span class="mono">SubCensusEsp-setup</span>. Join it, then set your WiFi in the
+          node's <b>Settings</b> page, or set credentials over serial.</li>
+        <li>Open the <b>Serial monitor</b> at <span class="mono">115200</span> baud to see boot
+          logs and the assigned IP:
+          <div class="mono" style="margin-top:6px">SC boot node=subcensusesp<br>SC cc1101 present=1 version=0x14<br>SC core_ok crc=180 place=home</div>
+        </li>
+        <li>Browse to the node's IP to reach the full UI: <b>Live feed</b>, <b>Review/label</b>,
+          <b>Bands</b> (occupancy/watchlist), <b>Places</b>, and <b>Settings</b>.</li>
+        <li>No radio wired yet? Try the built-in fixture path: <span class="mono">POST /api/recon</span>
+          with <span class="mono">action=fixture</span> populates a demo occupancy/watchlist,
+          and <span class="mono">POST /api/debug/inject</span> replays a <span class="mono">.sub</span>
+          capture through the full decode → classify → log → live-feed pipeline — no RF needed.</li>
+      </ol>
+      <div class="note"><b>Monitoring is passive.</b> Sweep/Camp/Recon never transmit. TX
+        (replay / edit-before-transmit) is off by default and TX-allow-list gated.</div>
+    </section>
+
+    <section>
+      <h2>Troubleshooting</h2>
+      <table>
+        <tbody>
+          <tr><td><b>No port in the picker</b></td><td>Use a <b>data</b> USB cable; install the CP210x/CH340 driver; try another USB port.</td></tr>
+          <tr><td><b>"Failed to initialize"</b></td><td>Close other serial monitors, unplug/replug, retry. On some boards hold <span class="kbd">BOOT</span> while the flash starts, release after it connects.</td></tr>
+          <tr><td><b>Button missing / greyed</b></td><td>You're not on Chrome/Edge desktop. Web Serial isn't in Firefox, Safari, or mobile browsers.</td></tr>
+          <tr><td><b>cc1101: absent</b> in the UI</td><td>Check 3V3 power, CS→GPIO5, and the SPI wiring; a floating VERSION register reads absent.</td></tr>
+          <tr><td><b>Flashes but no WiFi</b></td><td>Join <span class="mono">SubCensusEsp-setup</span> and set credentials, or set them over serial; watch the monitor for the IP.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <footer>
+      Part of <b>SubCensus</b> — a three-sensor ISM census (Flipper Zero · RTL-SDR/Pi · ESP32).
+      Firmware source, wiring details, and the CLI flash path:
+      <a href="https://github.com/JamesDavid/SubCensus/tree/master/esp" target="_blank" rel="noopener">github.com/JamesDavid/SubCensus</a>.
+    </footer>
+  </div>
+
+  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js"></script>
+</body>
+</html>
