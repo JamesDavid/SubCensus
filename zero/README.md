@@ -72,8 +72,19 @@ harness (`tools/debug/flipper_*`) drives on-device UI once a Flipper is attached
 
 ## Status
 
-**M1 complete** — skeleton FAP (menu, Settings persisted via FlipperFormat, Places
-create/set-active/rename/delete, allowed-freq guard, About). **M2–M10 pending** (capture
-engine, Sweep, Recon, auto-classify, classification DB, Dual OOK/FSK, Review+replay,
-host `export_place`/`analyze_place`, optional edit-before-transmit) — the radio-heavy half;
-implement fully, cover with fixtures + compile-check, mark on-device validation `TODO(hw)`.
+**All milestones complete (M0–M10):**
+- **M0** Phase-0 prior-art + SDK pin (`docs/SubCensusZero_Phase0_Findings.md`) · **M1** skeleton
+  (menu, Settings, Places, freq guard, About) · **M2** Camp capture engine (`census_worker`:
+  async RX → feature vector → `.sub` + census_log + notify; live view) · **M3** Sweep
+  (watchlist-or-preset) · **M4** Recon (`census_recon`: hybrid-grid occupancy → occupancy.csv +
+  watchlist.csv) · **M5** auto-classify (`SubGhzReceiver`/environment protocol tagging) ·
+  **M6** classification DB (`census_brain`: gated k-NN + confirm-appends-fingerprint) ·
+  **M7** Dual OOK/FSK (`fsk_suspected`) · **M8** Review + on-device labeling + replay-to-identify ·
+  **M9** host `export_place`/`analyze_place` accept a Zero place folder (`tools/`) ·
+  **M10** confirm-gated edit-before-transmit TX flow (optional).
+
+Live RSSI / capture / TX are on-device (`TODO(hw)`); the processing they feed is `shared/core`
+(native-tested) and every milestone compile-checks under `ufbt`. The full on-device raw-bit /
+structured-field editor (M10) is the remaining optional UI depth — its passive primitives
+(`sc_diff` / `sc_crc`) already ship. A distributable brain seed lives in
+[`../shared/signatures/`](../shared/signatures/).

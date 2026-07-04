@@ -73,10 +73,13 @@ Per-target build + test instructions live in each target's README (linked above)
 
 - **Shared layer** — complete: taxonomy + schema + codegen, `shared/core` (10 native test
   files), host tools + brain, fixtures.
-- **SubCensusZero** — M1 (skeleton FAP: menu, settings, Places, freq guard). M2–M10 (capture/
-  sweep/recon/classify/replay) pending — the radio-heavy half.
-- **SubCensusPi** — complete: M0–M9 (collector → SQLite, dashboard, multi-dongle, unknowns,
-  MQTT/HA, occupancy pass, shared brain, Places, field-map discovery). 51 tests green.
-- **SubCensusEsp** — non-optional milestones complete: M1–M5 + M7 (skeleton, RMT capture +
-  Camp, Recon/Sweep, classification, full web UI, MQTT/HA + brain sync + OTA). Optional M6
-  (SD) / M8 (replay/edit-TX) remain. 8 native + 7 web-driver tests green; `pio run` clean.
+- **SubCensusZero** — **complete (M0–M10)**: Phase-0, skeleton, Camp/Sweep/Recon capture,
+  auto-classify, classification DB (k-NN + confirm-appends-fingerprint), Dual OOK/FSK, Review +
+  labeling + confirm-gated replay, host tools. `ufbt` build + lint clean; live radio `TODO(hw)`.
+- **SubCensusPi** — **complete (M0–M9)**: collector → SQLite, dashboard, multi-dongle, unknowns,
+  MQTT/HA, occupancy pass, shared brain, Places, field-map discovery. 51 tests green.
+- **SubCensusEsp** — **complete (M1–M8)**: skeleton, RMT capture + Camp, Recon/Sweep,
+  classification, full web UI, SD auto-detect, MQTT/HA + brain sync + OTA, replay/edit-TX.
+  8 native + 7 web-driver tests; `pio run` clean. **[Browser web flasher](https://jamesdavid.github.io/SubCensus/)**.
+- **Brain seed** — [`shared/signatures/`](./shared/signatures/): distributable `protocol_map.csv`
+  (~64 Flipper + rtl_433 protocols) so a fresh install classifies out of the box.
