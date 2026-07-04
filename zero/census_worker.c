@@ -3,6 +3,10 @@
 #include <furi_hal_rtc.h>
 #include <lib/subghz/devices/cc1101_int/cc1101_int_interconnect.h>
 #include <lib/subghz/devices/devices.h>
+#include <lib/subghz/environment.h>
+#include <lib/subghz/protocols/base.h>
+#include <lib/subghz/receiver.h>
+#include <lib/subghz/subghz_protocol_registry.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -40,6 +44,15 @@ struct CensusWorker {
     volatile size_t timings_len;
     volatile bool overflow;
 
+    /* auto-classify (§5.1 step 2, M5) + Dual OOK/FSK (§5.3, M7) */
+    SubGhzEnvironment* env;
+    SubGhzReceiver* receiver;
+    bool auto_classify;
+    bool dual;
+    volatile bool decoded;
+    char decoded_name[24];
+    volatile float capture_peak;
+
     /* live state */
     volatile float rssi;
     volatile uint32_t current_freq;
@@ -53,6 +66,19 @@ struct CensusWorker {
     void* callback_context;
 };
 
+/* Opportunistic known-protocol decode (§5.1 step 2, M5): fires when a decoder matches. */
+static void census_rx_callback(
+    SubGhzReceiver* receiver,
+    SubGhzProtocolDecoderBase* decoder,
+    void* context) {
+    CensusWorker* w = context;
+    w->decoded = true;
+    const char* name = (decoder && decoder->protocol) ? decoder->protocol->name : "decoded";
+    strncpy(w->decoded_name, name ? name : "decoded", sizeof(w->decoded_name) - 1);
+    w->decoded_name[sizeof(w->decoded_name) - 1] = '\0';
+    subghz_receiver_reset(receiver);
+}
+
 /* --- async RX capture callback (interrupt context — keep minimal) --- */
 static void census_capture_cb(bool level, uint32_t duration, void* context) {
     CensusWorker* w = context;
@@ -63,6 +89,7 @@ static void census_capture_cb(bool level, uint32_t duration, void* context) {
     } else {
         w->overflow = true;
     }
+    if(w->auto_classify && w->receiver) subghz_receiver_decode(w->receiver, level, duration);
 }
 
 static void census_iso_now(char* out, size_t cap) {
@@ -91,13 +118,19 @@ static ScModulation census_preset_modulation(FuriHalSubGhzPreset p) {
 }
 
 /* Finalize one capture: snapshot timings, write .sub, append census_log, notify (§5.1). */
-static void census_process_capture(CensusWorker* w, uint32_t freq, float rssi) {
+static void census_process_capture(CensusWorker* w, uint32_t freq, float rssi, float peak) {
     size_t n = w->timings_len;
     if(n < 4) { /* too few edges — discard the .sub but still note the blip (§7) */
         w->timings_len = 0;
         w->overflow = false;
         return;
     }
+
+    /* auto-classify result + Dual OOK/FSK hint (§5.3): OOK decode failed on a strong signal */
+    const char* proto = w->decoded ? w->decoded_name : "";
+    int fsk_suspected =
+        (!w->decoded && peak >= -75.0f && census_preset_modulation(w->preset) == SC_MOD_OOK) ? 1 :
+                                                                                               0;
 
     char ts[32];
     census_iso_now(ts, sizeof(ts));
@@ -137,15 +170,17 @@ static void census_process_capture(CensusWorker* w, uint32_t freq, float rssi) {
     snprintf(
         row,
         sizeof(row),
-        "%s,%lu,%.1f,%lu,%s,%d,,,,,%.2f,,%s,\n",
+        "%s,%lu,%.1f,%lu,%s,%d,%s,,,,%.2f,,%s,\n",
         ts,
         (unsigned long)freq,
-        (double)rssi,
+        (double)peak,
         (unsigned long)0,
         w->preset_name,
-        0,
+        fsk_suspected,
+        proto,
         (double)0.0f,
         sub_rel);
+    (void)rssi;
     char log_abs[160];
     census_place_file(w->place_id, "census_log.csv", log_abs, sizeof(log_abs));
     File* lf = storage_file_alloc(w->storage);
@@ -207,18 +242,22 @@ static void census_monitor_freq(CensusWorker* w, uint32_t freq, uint32_t window_
                 capturing = true;
                 capture_start = now;
                 w->timings_len = 0;
+                w->decoded = false;
+                w->capture_peak = rssi;
+                if(w->receiver) subghz_receiver_reset(w->receiver);
             }
+            if(rssi > w->capture_peak) w->capture_peak = rssi;
             quiet_since = 0;
         } else if(capturing) {
             if(quiet_since == 0) quiet_since = now;
             if((now - quiet_since) >= w->signal_end_gap_ms) {
-                census_process_capture(w, freq, rssi);
+                census_process_capture(w, freq, rssi, w->capture_peak);
                 capturing = false;
                 furi_delay_ms(w->min_gap_ms); /* repeat suppression (§7) */
             }
         }
         if(capturing && (now - capture_start) >= w->capture_max_ms) {
-            census_process_capture(w, freq, rssi);
+            census_process_capture(w, freq, rssi, w->capture_peak);
             capturing = false;
         }
         if(window_ms && (now - start) >= window_ms) break;
@@ -257,6 +296,11 @@ CensusWorker* census_worker_alloc(Storage* storage) {
     w->recent_mutex = furi_mutex_alloc(FuriMutexTypeNormal);
     subghz_devices_init();
     w->device = subghz_devices_get_by_name(SUBGHZ_DEVICE_CC1101_INT_NAME);
+    /* standard SubGhz decoder registry for opportunistic protocol tagging (§5.1, M5) */
+    w->env = subghz_environment_alloc();
+    subghz_environment_set_protocol_registry(w->env, (void*)&subghz_protocol_registry);
+    w->receiver = subghz_receiver_alloc_init(w->env);
+    subghz_receiver_set_rx_callback(w->receiver, census_rx_callback, w);
     w->threshold_dbm = -80;
     w->signal_end_gap_ms = 120;
     w->capture_max_ms = 1500;
@@ -269,6 +313,8 @@ CensusWorker* census_worker_alloc(Storage* storage) {
 
 void census_worker_free(CensusWorker* w) {
     census_worker_stop(w);
+    subghz_receiver_free(w->receiver);
+    subghz_environment_free(w->env);
     subghz_devices_deinit();
     furi_mutex_free(w->recent_mutex);
     free(w);
@@ -287,6 +333,8 @@ void census_worker_configure(CensusWorker* w, const CensusSettings* s, const cha
     w->capture_max_ms = s->capture_max_ms;
     w->min_gap_ms = s->min_gap_ms;
     w->dwell_ms = s->dwell_ms;
+    w->auto_classify = s->auto_classify;
+    w->dual = (s->capture_preset == CensusCaptureDual);
     switch(s->capture_preset) {
     case CensusCaptureOok270:
         w->preset = FuriHalSubGhzPresetOok270Async;
