@@ -8,13 +8,26 @@
  * mixing 300/900, and a long inter-frame gap. */
 static size_t build_frames(int32_t* buf) {
     static const int32_t frame[] = {
-        300, -300, 300, -300, 300, -300, 300, -300, /* preamble: 8 x |300| */
-        900, -300, 300, -900, 900, -300,            /* data: 3x300, 3x900 */
+        300,
+        -300,
+        300,
+        -300,
+        300,
+        -300,
+        300,
+        -300, /* preamble: 8 x |300| */
+        900,
+        -300,
+        300,
+        -900,
+        900,
+        -300, /* data: 3x300, 3x900 */
     };
     static const int32_t gap = -8850;
     size_t n = 0;
     for(int rep = 0; rep < 3; rep++) {
-        for(size_t i = 0; i < sizeof(frame) / sizeof(frame[0]); i++) buf[n++] = frame[i];
+        for(size_t i = 0; i < sizeof(frame) / sizeof(frame[0]); i++)
+            buf[n++] = frame[i];
         buf[n++] = gap;
     }
     return n; /* 3 * (14 + 1) = 45 */

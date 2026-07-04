@@ -5,8 +5,14 @@
 #include "sc_test.h"
 
 static ScFeatureVector fv_make(
-    int32_t bin, ScModulation mod, int32_t s0, int32_t s1, int32_t nsym,
-    int32_t bitrate, int32_t pre, int32_t rep) {
+    int32_t bin,
+    ScModulation mod,
+    int32_t s0,
+    int32_t s1,
+    int32_t nsym,
+    int32_t bitrate,
+    int32_t pre,
+    int32_t rep) {
     ScFeatureVector fv;
     memset(&fv, 0, sizeof(fv));
     fv.freq_bin = bin;

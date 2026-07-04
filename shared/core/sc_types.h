@@ -22,10 +22,14 @@ typedef enum {
 
 static inline const char* sc_modulation_str(ScModulation m) {
     switch(m) {
-        case SC_MOD_OOK: return "OOK";
-        case SC_MOD_2FSK: return "2-FSK";
-        case SC_MOD_TPMS: return "TPMS-preset";
-        default: return "";
+    case SC_MOD_OOK:
+        return "OOK";
+    case SC_MOD_2FSK:
+        return "2-FSK";
+    case SC_MOD_TPMS:
+        return "TPMS-preset";
+    default:
+        return "";
     }
 }
 
@@ -49,12 +53,18 @@ typedef enum {
 
 static inline const char* sc_cadence_str(ScCadenceClass c) {
     switch(c) {
-        case SC_CADENCE_PERIODIC: return "periodic";
-        case SC_CADENCE_QUASI_PERIODIC: return "quasi-periodic";
-        case SC_CADENCE_EVENT_DRIVEN: return "event-driven";
-        case SC_CADENCE_NEAR_CONTINUOUS: return "near-continuous";
-        case SC_CADENCE_SEEN_ONCE: return "seen-once";
-        default: return "";
+    case SC_CADENCE_PERIODIC:
+        return "periodic";
+    case SC_CADENCE_QUASI_PERIODIC:
+        return "quasi-periodic";
+    case SC_CADENCE_EVENT_DRIVEN:
+        return "event-driven";
+    case SC_CADENCE_NEAR_CONTINUOUS:
+        return "near-continuous";
+    case SC_CADENCE_SEEN_ONCE:
+        return "seen-once";
+    default:
+        return "";
     }
 }
 

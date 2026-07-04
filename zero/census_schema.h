@@ -13,7 +13,8 @@
 // contract without hand-maintained magic strings.
 
 // --- catalog_record (System §9, scope=catalog) ---
-#define CATALOG_RECORD_HEADER "ts,freq_hz,modulation,device_class,first_seen,last_seen,count,match_name,match_class,match_conf,match_source,label,cadence_class,period_s,period_regularity,cadence_samples"
+#define CATALOG_RECORD_HEADER \
+    "ts,freq_hz,modulation,device_class,first_seen,last_seen,count,match_name,match_class,match_conf,match_source,label,cadence_class,period_s,period_regularity,cadence_samples"
 #define CATALOG_RECORD_NCOLS 16
 typedef enum {
     CATALOG_RECORD_COL_TS = 0,
@@ -35,7 +36,8 @@ typedef enum {
 } CatalogRecordCol;
 
 // --- census_log (Zero §5.4 (extends System §9), scope=per-place) ---
-#define CENSUS_LOG_HEADER "ts_iso,freq_hz,rssi_dbm,duration_ms,preset,fsk_suspected,protocol,key,match_name,match_class,match_conf,match_source,sub_file,label"
+#define CENSUS_LOG_HEADER \
+    "ts_iso,freq_hz,rssi_dbm,duration_ms,preset,fsk_suspected,protocol,key,match_name,match_class,match_conf,match_source,sub_file,label"
 #define CENSUS_LOG_NCOLS 14
 typedef enum {
     CENSUS_LOG_COL_TS_ISO = 0,
@@ -55,7 +57,8 @@ typedef enum {
 } CensusLogCol;
 
 // --- fingerprints (System §7, scope=global) ---
-#define FINGERPRINTS_HEADER "id,freq_bin,modulation,sym_dur_us_1,sym_dur_us_2,sym_dur_us_3,n_symbols,est_bitrate,preamble_len,repeat_count,device_name,device_class,source,cadence_class,period_s,period_regularity,cadence_samples"
+#define FINGERPRINTS_HEADER \
+    "id,freq_bin,modulation,sym_dur_us_1,sym_dur_us_2,sym_dur_us_3,n_symbols,est_bitrate,preamble_len,repeat_count,device_name,device_class,source,cadence_class,period_s,period_regularity,cadence_samples"
 #define FINGERPRINTS_NCOLS 17
 typedef enum {
     FINGERPRINTS_COL_ID = 0,
@@ -79,7 +82,7 @@ typedef enum {
 
 // --- occupancy (System §9, scope=per-place) ---
 #define OCCUPANCY_HEADER "freq_hz,noise_floor,peak_rssi,occupancy,crossings,last_seen"
-#define OCCUPANCY_NCOLS 6
+#define OCCUPANCY_NCOLS  6
 typedef enum {
     OCCUPANCY_COL_FREQ_HZ = 0,
     OCCUPANCY_COL_NOISE_FLOOR = 1,
@@ -91,7 +94,7 @@ typedef enum {
 
 // --- protocol_map (System §6, scope=global) ---
 #define PROTOCOL_MAP_HEADER "protocol,friendly_name,device_class,typical_use,notes"
-#define PROTOCOL_MAP_NCOLS 5
+#define PROTOCOL_MAP_NCOLS  5
 typedef enum {
     PROTOCOL_MAP_COL_PROTOCOL = 0,
     PROTOCOL_MAP_COL_FRIENDLY_NAME = 1,
@@ -102,7 +105,7 @@ typedef enum {
 
 // --- watchlist (System §9, scope=per-place) ---
 #define WATCHLIST_HEADER "freq_hz,modulation,threshold_dbm,occupancy,source"
-#define WATCHLIST_NCOLS 5
+#define WATCHLIST_NCOLS  5
 typedef enum {
     WATCHLIST_COL_FREQ_HZ = 0,
     WATCHLIST_COL_MODULATION = 1,

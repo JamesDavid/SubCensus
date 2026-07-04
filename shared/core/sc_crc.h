@@ -38,17 +38,17 @@ typedef enum {
     SC_CK_NONE = 0,
     SC_CK_XOR,
     SC_CK_SUM,
-    SC_CK_CRC8,   /* MSB-first, poly+init */
+    SC_CK_CRC8, /* MSB-first, poly+init */
     SC_CK_CRC8LE, /* LSB-first, poly+init */
-    SC_CK_LFSR8,  /* Galois LFSR digest, gen+key */
+    SC_CK_LFSR8, /* Galois LFSR digest, gen+key */
 } ScChecksumKind;
 
 typedef struct {
     ScChecksumKind kind;
     uint8_t poly; /* CRC8 / CRC8LE */
     uint8_t init; /* CRC8 / CRC8LE */
-    uint8_t gen;  /* LFSR8 */
-    uint8_t key;  /* LFSR8 */
+    uint8_t gen; /* LFSR8 */
+    uint8_t key; /* LFSR8 */
 } ScChecksumSpec;
 
 const char* sc_checksum_kind_str(ScChecksumKind k);

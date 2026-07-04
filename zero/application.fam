@@ -1,0 +1,20 @@
+App(
+    appid="subcensuszero",
+    name="SubCensusZero",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="subcensuszero_app",
+    requires=["gui"],
+    stack_size=4 * 1024,
+    fap_category="Sub-GHz",
+    fap_author="SubCensus",
+    fap_version="0.1",
+    fap_description="Census of ISM-band sub-GHz signals: Recon/Sweep/Camp survey, "
+    "capture-to-.sub with a persistent catalog, on-device classification + labeling, "
+    "and replay-to-identify. Passive monitoring; explicit TX only.",
+    # shared/core is compiled via the unity TU subcensus_core.c (see that file) — fbt can't
+    # reference ../ sources, so we keep everything inside the app tree.
+    sources=[
+        "*.c",
+        "scenes/*.c",
+    ],
+)

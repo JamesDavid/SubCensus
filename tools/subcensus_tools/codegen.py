@@ -55,7 +55,7 @@ def gen_taxonomy_header(tax: Taxonomy) -> str:
     lines.append("")
     lines.append("typedef enum {")
     for i, c in enumerate(tax.classes):
-        note = f"  // {c.name}" + ("  [deprecated]" if c.deprecated else "")
+        note = f" // {c.name}" + (" [deprecated]" if c.deprecated else "")
         lines.append(f"    {c.enum_name} = {i},{note}")
     lines.append(f"    CENSUS_CLASS_COUNT = {len(tax.classes)},")
     lines.append("} CensusDeviceClass;")
@@ -65,8 +65,10 @@ def gen_taxonomy_header(tax: Taxonomy) -> str:
     lines.append("static inline const char* census_class_id(CensusDeviceClass c) {")
     lines.append("    switch(c) {")
     for c in tax.classes:
-        lines.append(f'        case {c.enum_name}: return "{_c_escape(c.id)}";')
-    lines.append('        default: return "unknown";')
+        lines.append(f"    case {c.enum_name}:")
+        lines.append(f'        return "{_c_escape(c.id)}";')
+    lines.append("    default:")
+    lines.append('        return "unknown";')
     lines.append("    }")
     lines.append("}")
     lines.append("")
@@ -75,8 +77,10 @@ def gen_taxonomy_header(tax: Taxonomy) -> str:
     lines.append("static inline const char* census_class_name(CensusDeviceClass c) {")
     lines.append("    switch(c) {")
     for c in tax.classes:
-        lines.append(f'        case {c.enum_name}: return "{_c_escape(c.name)}";')
-    lines.append('        default: return "Unknown";')
+        lines.append(f"    case {c.enum_name}:")
+        lines.append(f'        return "{_c_escape(c.name)}";')
+    lines.append("    default:")
+    lines.append('        return "Unknown";')
     lines.append("    }")
     lines.append("}")
     lines.append("")
@@ -107,9 +111,15 @@ def gen_schema_header(schemas: dict[str, Schema]) -> str:
     for name in sorted(schemas):
         s = schemas[name]
         pfx = _macro_prefix(name)
-        header_str = ",".join(s.header())
+        header_str = _c_escape(",".join(s.header()))
         lines.append(f"// --- {name} ({s.system_ref}, scope={s.scope}) ---")
-        lines.append(f'#define {pfx}_HEADER "{_c_escape(header_str)}"')
+        # clang-format wraps a #define past column 99 onto a continuation line.
+        one_line = f'#define {pfx}_HEADER "{header_str}"'
+        if len(one_line) > 99:
+            lines.append(f"#define {pfx}_HEADER \\")
+            lines.append(f'    "{header_str}"')
+        else:
+            lines.append(one_line)
         lines.append(f"#define {pfx}_NCOLS {len(s.columns)}")
         lines.append("typedef enum {")
         for i, col in enumerate(s.columns):
@@ -141,6 +151,19 @@ def _normalize(text: str) -> str:
     return text.replace("\r\n", "\n").rstrip("\n") + "\n"
 
 
+def _content_key(text: str) -> str:
+    """Formatting-invariant content key for --check.
+
+    The committed generated files are clang-formatted by `ufbt format` (whitespace,
+    case-body wrapping, AlignConsecutiveMacros, `\\` line continuations). Codegen emits
+    raw C. We therefore compare on CONTENT — strip all whitespace and macro-continuation
+    backslashes — so `--check` catches a real drift (an identifier/string/number change
+    from editing shared/) while leaving formatting to clang-format. The two gates are
+    independent: `--check` = content up-to-date; `ufbt lint` = correctly formatted.
+    """
+    return re.sub(r"[\s\\]+", "", text)
+
+
 def write() -> list[Path]:
     written: list[Path] = []
     for path, content in _targets():
@@ -155,7 +178,7 @@ def check() -> list[Path]:
     stale: list[Path] = []
     for path, content in _targets():
         current = path.read_text(encoding="utf-8") if path.exists() else ""
-        if _normalize(current) != _normalize(content):
+        if _content_key(current) != _content_key(content):
             stale.append(path)
     return stale
 

@@ -10,7 +10,8 @@ int main(void) {
     sc_occupancy_accum_init(&a, 433920000);
     double rssi[] = {-95, -70, -68, -96, -97, -60, -94, -93, -65, -95};
     /* above -80: idx1(-70),2(-68),5(-60),8(-65) -> 4 above; bursts at {1,2},{5},{8} = 3 crossings */
-    for(int i = 0; i < 10; i++) sc_occupancy_accum_sample(&a, rssi[i], -80.0, 1000 + i);
+    for(int i = 0; i < 10; i++)
+        sc_occupancy_accum_sample(&a, rssi[i], -80.0, 1000 + i);
     ScOccupancyBin bin;
     sc_occupancy_accum_finish(&a, &bin);
     SC_CHECK_INT(bin.freq_hz, 433920000);
@@ -40,7 +41,7 @@ int main(void) {
     SC_CHECK_INT(wl[0].freq_hz, 915000000); /* busiest first (Auto pick) */
     SC_CHECK_INT(wl[1].freq_hz, 433920000);
     SC_CHECK_DBL(wl[0].threshold_dbm, -87.0, 0.001); /* -99 + 12 */
-    SC_CHECK_INT(wl[0].modulation, SC_MOD_UNKNOWN);  /* Stage B resolves later */
+    SC_CHECK_INT(wl[0].modulation, SC_MOD_UNKNOWN); /* Stage B resolves later */
 
     return sc_test_summary();
 }

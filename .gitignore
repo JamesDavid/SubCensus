@@ -2,6 +2,7 @@
 zero/.ufbt/
 zero/dist/
 zero/build/
+zero/.vscode/
 *.fap
 *.fap.debug
 

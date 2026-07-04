@@ -17,14 +17,14 @@
 #include "sc_types.h"
 
 typedef struct {
-    int32_t freq_bin;        /* carrier binned to SC_FREQ_BIN_HZ (Hz) */
+    int32_t freq_bin; /* carrier binned to SC_FREQ_BIN_HZ (Hz) */
     ScModulation modulation; /* provided by caller (capture preset) */
-    int32_t sym_dur_us[3];   /* up to 3 dominant symbol durations, ASCENDING; 0 = unused */
-    int32_t n_sym_dur;       /* how many of sym_dur_us[] are valid (0..3) */
-    int32_t n_symbols;       /* count of non-zero pulses analyzed */
-    int32_t est_bitrate;     /* bits/s, ~ 1e6 / shortest dominant symbol */
-    int32_t preamble_len;    /* leading run of regular (equal-width) pulses */
-    int32_t repeat_count;    /* frames per event (interior long gaps + 1) */
+    int32_t sym_dur_us[3]; /* up to 3 dominant symbol durations, ASCENDING; 0 = unused */
+    int32_t n_sym_dur; /* how many of sym_dur_us[] are valid (0..3) */
+    int32_t n_symbols; /* count of non-zero pulses analyzed */
+    int32_t est_bitrate; /* bits/s, ~ 1e6 / shortest dominant symbol */
+    int32_t preamble_len; /* leading run of regular (equal-width) pulses */
+    int32_t repeat_count; /* frames per event (interior long gaps + 1) */
 } ScFeatureVector;
 
 /* Compute the waveform feature vector from `n` signed timings captured at `freq_hz`

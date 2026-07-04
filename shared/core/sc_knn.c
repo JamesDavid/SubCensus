@@ -3,36 +3,36 @@
 #include <math.h>
 
 /* Fixed normalization scales + weights (identical on every sensor — System §7). */
-#define KNN_SCALE_SYM 300.0
-#define KNN_SCALE_NSYM 50.0
-#define KNN_SCALE_BITRATE 2000.0
+#define KNN_SCALE_SYM      300.0
+#define KNN_SCALE_NSYM     50.0
+#define KNN_SCALE_BITRATE  2000.0
 #define KNN_SCALE_PREAMBLE 8.0
-#define KNN_SCALE_REPEAT 3.0
+#define KNN_SCALE_REPEAT   3.0
 
-#define KNN_W_SYM 1.0
-#define KNN_W_NSYM 0.3
-#define KNN_W_BITRATE 0.5
+#define KNN_W_SYM      1.0
+#define KNN_W_NSYM     0.3
+#define KNN_W_BITRATE  0.5
 #define KNN_W_PREAMBLE 0.5
-#define KNN_W_REPEAT 0.3
+#define KNN_W_REPEAT   0.3
 
 #define KNN_MISSING_PENALTY 1.0 /* squared term added when one side lacks a sym duration */
 
 /* Cadence soft adjustment (System §6). */
-#define KNN_CADENCE_AGREE 1.15
+#define KNN_CADENCE_AGREE        1.15
 #define KNN_CADENCE_PERIOD_AGREE 1.10
-#define KNN_CADENCE_DISAGREE 0.80
-#define KNN_PERIOD_TOL 0.20
+#define KNN_CADENCE_DISAGREE     0.80
+#define KNN_PERIOD_TOL           0.20
 
-static double sq(double x) {
+static float sq(float x) {
     return x * x;
 }
 
-static double term(double a, double b, double scale, double w) {
+static float term(float a, float b, float scale, float w) {
     return w * sq((a - b) / scale);
 }
 
-static double gated_distance(const ScFeatureVector* a, const ScFeatureVector* b) {
-    double d2 = 0.0;
+static float gated_distance(const ScFeatureVector* a, const ScFeatureVector* b) {
+    float d2 = 0.0;
 
     /* symbol durations: compare where both present; penalize count mismatch */
     for(int i = 0; i < 3; i++) {
@@ -48,16 +48,15 @@ static double gated_distance(const ScFeatureVector* a, const ScFeatureVector* b)
     d2 += term(a->est_bitrate, b->est_bitrate, KNN_SCALE_BITRATE, KNN_W_BITRATE);
     d2 += term(a->preamble_len, b->preamble_len, KNN_SCALE_PREAMBLE, KNN_W_PREAMBLE);
     d2 += term(a->repeat_count, b->repeat_count, KNN_SCALE_REPEAT, KNN_W_REPEAT);
-    return sqrt(d2);
+    return sqrtf(d2);
 }
 
-static double cadence_adjust(
-    double conf, ScCadenceClass qc, double qp, ScCadenceClass cc, double cp) {
+static float cadence_adjust(float conf, ScCadenceClass qc, float qp, ScCadenceClass cc, float cp) {
     if(qc == SC_CADENCE_NONE || cc == SC_CADENCE_NONE) return conf; /* soft: no data, no change */
     if(qc == cc) {
         conf *= KNN_CADENCE_AGREE;
         if(qp > 0 && cp > 0) {
-            double rel = fabs(qp - cp) / (cp > qp ? cp : qp);
+            float rel = fabsf(qp - cp) / (cp > qp ? cp : qp);
             if(rel < KNN_PERIOD_TOL) conf *= KNN_CADENCE_PERIOD_AGREE;
         }
     } else {
@@ -82,8 +81,8 @@ size_t sc_knn_match(
         if(cands[i].fv.freq_bin != q->fv.freq_bin) continue;
         if(cands[i].fv.modulation != q->fv.modulation) continue;
 
-        double d = gated_distance(&q->fv, &cands[i].fv);
-        double conf = 1.0 / (1.0 + d);
+        float d = gated_distance(&q->fv, &cands[i].fv);
+        float conf = 1.0 / (1.0 + d);
         conf = cadence_adjust(
             conf, q->cadence_class, q->period_s, cands[i].cadence_class, cands[i].period_s);
 
@@ -92,10 +91,12 @@ size_t sc_knn_match(
         /* insertion into the top-N (sorted by confidence desc) */
         size_t limit = count < topn ? count : topn;
         size_t pos = limit;
-        while(pos > 0 && out[pos - 1].confidence < m.confidence) pos--;
+        while(pos > 0 && out[pos - 1].confidence < m.confidence)
+            pos--;
         if(pos < topn) {
             size_t last = (count < topn) ? count : topn - 1;
-            for(size_t j = last; j > pos; j--) out[j] = out[j - 1];
+            for(size_t j = last; j > pos; j--)
+                out[j] = out[j - 1];
             out[pos] = m;
             if(count < topn) count++;
         }

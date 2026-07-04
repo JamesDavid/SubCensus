@@ -41,8 +41,9 @@ int main(void) {
     /* byte2 LSB (bit 23): slow-varying (flips once) */
     SC_CHECK_INT(prof[23].cls, SC_BIT_SLOW);
     SC_CHECK_INT(prof[23].distinct, 2);
-    SC_CHECK(prof[23].change_rate > 0.0 && prof[23].change_rate < 0.8,
-             "slow bit changes but not every frame");
+    SC_CHECK(
+        prof[23].change_rate > 0.0 && prof[23].change_rate < 0.8,
+        "slow bit changes but not every frame");
 
     /* byte2 high bits (16..22) never change -> static */
     SC_CHECK_INT(prof[16].cls, SC_BIT_STATIC);

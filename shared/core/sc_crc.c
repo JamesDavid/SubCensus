@@ -38,13 +38,15 @@ uint8_t sc_crc8le(const uint8_t* msg, size_t n, uint8_t poly, uint8_t init) {
 
 uint8_t sc_xor_bytes(const uint8_t* msg, size_t n) {
     uint8_t r = 0;
-    for(size_t i = 0; i < n; i++) r ^= msg[i];
+    for(size_t i = 0; i < n; i++)
+        r ^= msg[i];
     return r;
 }
 
 uint8_t sc_add_bytes(const uint8_t* msg, size_t n) {
     uint8_t r = 0;
-    for(size_t i = 0; i < n; i++) r = (uint8_t)(r + msg[i]);
+    for(size_t i = 0; i < n; i++)
+        r = (uint8_t)(r + msg[i]);
     return r;
 }
 
@@ -66,12 +68,18 @@ uint8_t sc_lfsr_digest8(const uint8_t* msg, size_t n, uint8_t gen, uint8_t key) 
 
 const char* sc_checksum_kind_str(ScChecksumKind k) {
     switch(k) {
-        case SC_CK_XOR: return "xor";
-        case SC_CK_SUM: return "sum";
-        case SC_CK_CRC8: return "crc8";
-        case SC_CK_CRC8LE: return "crc8le";
-        case SC_CK_LFSR8: return "lfsr8";
-        default: return "none";
+    case SC_CK_XOR:
+        return "xor";
+    case SC_CK_SUM:
+        return "sum";
+    case SC_CK_CRC8:
+        return "crc8";
+    case SC_CK_CRC8LE:
+        return "crc8le";
+    case SC_CK_LFSR8:
+        return "lfsr8";
+    default:
+        return "none";
     }
 }
 

@@ -22,9 +22,9 @@
 #include "sc_result.h"
 
 typedef struct {
-    int32_t frequency;   /* Hz; 0 if absent */
-    char preset[64];     /* SDK preset name; "" if absent */
-    char protocol[32];   /* usually "RAW"; "" if absent */
+    int32_t frequency; /* Hz; 0 if absent */
+    char preset[64]; /* SDK preset name; "" if absent */
+    char protocol[32]; /* usually "RAW"; "" if absent */
 } ScSubMeta;
 
 /* Parse `.sub` text (len bytes). Fills *meta and writes up to `cap` signed timings into

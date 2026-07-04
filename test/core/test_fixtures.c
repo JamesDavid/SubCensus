@@ -49,11 +49,11 @@ int main(void) {
     /* golden feature values for this synthetic PT2262-style remote */
     SC_CHECK_INT(fv.freq_bin, 433920000);
     SC_CHECK_INT(fv.modulation, SC_MOD_OOK);
-    SC_CHECK_INT(fv.repeat_count, 5);  /* 5 repeated frames => 4 interior sync gaps + 1 */
-    SC_CHECK_INT(fv.preamble_len, 8);  /* 8-pulse |350| preamble */
+    SC_CHECK_INT(fv.repeat_count, 5); /* 5 repeated frames => 4 interior sync gaps + 1 */
+    SC_CHECK_INT(fv.preamble_len, 8); /* 8-pulse |350| preamble */
     SC_CHECK_INT(fv.n_sym_dur, 3);
-    SC_CHECK_DBL(fv.sym_dur_us[0], 350, 30);   /* short */
-    SC_CHECK_DBL(fv.sym_dur_us[1], 1050, 90);  /* long */
+    SC_CHECK_DBL(fv.sym_dur_us[0], 350, 30); /* short */
+    SC_CHECK_DBL(fv.sym_dur_us[1], 1050, 90); /* long */
     SC_CHECK(fv.est_bitrate > 2500 && fv.est_bitrate < 3200, "est_bitrate ~ 1e6/350");
 
     return sc_test_summary();

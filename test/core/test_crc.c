@@ -30,16 +30,18 @@ int main(void) {
     uint8_t flipped[CHECK_N];
     memcpy(flipped, CHECK, CHECK_N);
     flipped[0] ^= 0x01;
-    SC_CHECK(sc_lfsr_digest8(flipped, CHECK_N, 0x98, 0x3e) != d1,
-             "lfsr digest should change when input changes");
+    SC_CHECK(
+        sc_lfsr_digest8(flipped, CHECK_N, 0x98, 0x3e) != d1,
+        "lfsr digest should change when input changes");
 
     /* Checksum discovery: build a frame whose trailing byte is a known CRC-8, then
      * confirm the search names it. */
     uint8_t payload[] = {0xDE, 0xAD, 0xBE, 0xEF};
     uint8_t target = sc_crc8(payload, sizeof(payload), 0x07, 0x00);
     ScChecksumSpec spec;
-    SC_CHECK(sc_checksum_search(payload, sizeof(payload), target, &spec),
-             "should find a matching checksum algorithm");
+    SC_CHECK(
+        sc_checksum_search(payload, sizeof(payload), target, &spec),
+        "should find a matching checksum algorithm");
     SC_CHECK_INT(spec.kind, SC_CK_CRC8);
     SC_CHECK_INT(spec.poly, 0x07);
     SC_CHECK_STR(sc_checksum_kind_str(spec.kind), "crc8");

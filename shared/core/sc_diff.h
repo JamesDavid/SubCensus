@@ -16,15 +16,15 @@
 #include <stdint.h>
 
 typedef enum {
-    SC_BIT_STATIC = 0,  /* never changes across the corpus */
-    SC_BIT_SLOW = 1,    /* changes sometimes (candidate sensor value) */
+    SC_BIT_STATIC = 0, /* never changes across the corpus */
+    SC_BIT_SLOW = 1, /* changes sometimes (candidate sensor value) */
     SC_BIT_COUNTER = 2, /* changes almost every frame (sequence/counter) */
 } ScBitClass;
 
 typedef struct {
-    double change_rate; /* fraction of adjacent frame-pairs where this bit differs */
-    double entropy;     /* Shannon entropy of the bit over the corpus (0..1 bit) */
-    int distinct;       /* 1 if the bit took a single value, 2 if it took both */
+    float change_rate; /* fraction of adjacent frame-pairs where this bit differs */
+    float entropy; /* Shannon entropy of the bit over the corpus (0..1 bit) */
+    int distinct; /* 1 if the bit took a single value, 2 if it took both */
     ScBitClass cls;
 } ScBitProfile;
 

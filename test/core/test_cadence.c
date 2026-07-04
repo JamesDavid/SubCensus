@@ -24,8 +24,9 @@ int main(void) {
     int64_t drop[] = {0, 60, 180, 240, 300, 420};
     sc_cadence_from_timestamps(drop, 6, &est);
     SC_CHECK_DBL(est.period_s, 60, 5);
-    SC_CHECK(est.cls == SC_CADENCE_PERIODIC || est.cls == SC_CADENCE_QUASI_PERIODIC,
-             "dropout stays (quasi-)periodic on the fundamental");
+    SC_CHECK(
+        est.cls == SC_CADENCE_PERIODIC || est.cls == SC_CADENCE_QUASI_PERIODIC,
+        "dropout stays (quasi-)periodic on the fundamental");
 
     /* event-driven: irregular, non-harmonic arrivals */
     int64_t evt[] = {0, 5, 7, 100, 103, 500, 505};
@@ -41,10 +42,12 @@ int main(void) {
     /* running estimator agrees on the periodic case */
     ScCadenceEstimator e;
     sc_cadence_init(&e, 10.0); /* 10 s bins */
-    for(int i = 0; i < 8; i++) sc_cadence_observe(&e, (int64_t)i * 60);
+    for(int i = 0; i < 8; i++)
+        sc_cadence_observe(&e, (int64_t)i * 60);
     sc_cadence_estimate(&e, &est);
-    SC_CHECK(est.cls == SC_CADENCE_PERIODIC || est.cls == SC_CADENCE_QUASI_PERIODIC,
-             "running estimator finds periodic");
+    SC_CHECK(
+        est.cls == SC_CADENCE_PERIODIC || est.cls == SC_CADENCE_QUASI_PERIODIC,
+        "running estimator finds periodic");
     SC_CHECK_DBL(est.period_s, 60, 12); /* within a bin width */
     SC_CHECK_INT(est.samples, 7);
 

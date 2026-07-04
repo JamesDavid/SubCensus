@@ -2,14 +2,13 @@
 #include "sc_sub.h"
 #include "sc_test.h"
 
-static const char SAMPLE[] =
-    "Filetype: Flipper SubGhz RAW File\n"
-    "Version: 1\n"
-    "Frequency: 433920000\n"
-    "Preset: FuriHalSubGhzPresetOok650Async\n"
-    "Protocol: RAW\n"
-    "RAW_Data: 291 -100 300 -8850 291 -100\n"
-    "RAW_Data: 300 -200\n";
+static const char SAMPLE[] = "Filetype: Flipper SubGhz RAW File\n"
+                             "Version: 1\n"
+                             "Frequency: 433920000\n"
+                             "Preset: FuriHalSubGhzPresetOok650Async\n"
+                             "Protocol: RAW\n"
+                             "RAW_Data: 291 -100 300 -8850 291 -100\n"
+                             "RAW_Data: 300 -200\n";
 
 int main(void) {
     printf("test_sub\n");
@@ -43,7 +42,8 @@ int main(void) {
     SC_CHECK_INT(r, SC_OK);
     SC_CHECK_INT(meta2.frequency, 433920000);
     SC_CHECK_INT(n2, n);
-    for(size_t i = 0; i < n; i++) SC_CHECK_INT(t2[i], t[i]);
+    for(size_t i = 0; i < n; i++)
+        SC_CHECK_INT(t2[i], t[i]);
 
     /* Truncation: capacity smaller than timing count. */
     int32_t small[3];

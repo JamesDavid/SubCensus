@@ -12,7 +12,7 @@
 
 typedef struct {
     int32_t center_us; /* representative (mean) width, microseconds */
-    int32_t count;     /* how many pulses fell in this cluster */
+    int32_t count; /* how many pulses fell in this cluster */
 } ScPulseCluster;
 
 /* Cluster absolute pulse widths from signed `timings` (positive=mark, negative=space;
@@ -22,7 +22,7 @@ typedef struct {
 size_t sc_pulse_cluster(
     const int32_t* timings,
     size_t n,
-    double rel_tol,
+    float rel_tol,
     ScPulseCluster* out,
     size_t max_clusters);
 

@@ -7,7 +7,11 @@ void sc_occupancy_accum_init(ScOccupancyAccum* a, int32_t freq_hz) {
     a->freq_hz = freq_hz;
 }
 
-void sc_occupancy_accum_sample(ScOccupancyAccum* a, double rssi_dbm, double threshold_dbm, int64_t ts_s) {
+void sc_occupancy_accum_sample(
+    ScOccupancyAccum* a,
+    float rssi_dbm,
+    float threshold_dbm,
+    int64_t ts_s) {
     if(!a->started) {
         a->peak_rssi = rssi_dbm;
         a->noise_floor = rssi_dbm;
@@ -33,10 +37,14 @@ void sc_occupancy_accum_finish(const ScOccupancyAccum* a, ScOccupancyBin* out) {
     out->noise_floor = a->noise_floor;
     out->crossings = a->crossings;
     out->last_seen = a->last_seen;
-    out->occupancy = a->total > 0 ? (double)a->above / (double)a->total : 0.0;
+    out->occupancy = a->total > 0 ? (float)a->above / (float)a->total : 0.0;
 }
 
-void sc_occupancy_merge(ScOccupancyBin* acc, int32_t acc_weight, const ScOccupancyBin* in, int32_t in_weight) {
+void sc_occupancy_merge(
+    ScOccupancyBin* acc,
+    int32_t acc_weight,
+    const ScOccupancyBin* in,
+    int32_t in_weight) {
     if(acc_weight < 0) acc_weight = 0;
     if(in_weight < 0) in_weight = 0;
     int64_t total = (int64_t)acc_weight + in_weight;
@@ -45,10 +53,9 @@ void sc_occupancy_merge(ScOccupancyBin* acc, int32_t acc_weight, const ScOccupan
     acc->crossings += in->crossings;
     if(in->last_seen > acc->last_seen) acc->last_seen = in->last_seen;
     if(total > 0) {
-        acc->occupancy =
-            (acc->occupancy * acc_weight + in->occupancy * in_weight) / (double)total;
+        acc->occupancy = (acc->occupancy * acc_weight + in->occupancy * in_weight) / (float)total;
         acc->noise_floor =
-            (acc->noise_floor * acc_weight + in->noise_floor * in_weight) / (double)total;
+            (acc->noise_floor * acc_weight + in->noise_floor * in_weight) / (float)total;
     }
     if(acc->freq_hz == 0) acc->freq_hz = in->freq_hz;
 }
@@ -56,8 +63,8 @@ void sc_occupancy_merge(ScOccupancyBin* acc, int32_t acc_weight, const ScOccupan
 size_t sc_watchlist_from_occupancy(
     const ScOccupancyBin* bins,
     size_t n,
-    double occ_cutoff,
-    double margin_db,
+    float occ_cutoff,
+    float margin_db,
     ScWatchlistEntry* out,
     size_t cap) {
     if(!bins || !out || cap == 0) return 0;
@@ -73,10 +80,12 @@ size_t sc_watchlist_from_occupancy(
         /* insertion sort by occupancy desc into top-`cap` */
         size_t limit = count < cap ? count : cap;
         size_t pos = limit;
-        while(pos > 0 && out[pos - 1].occupancy < e.occupancy) pos--;
+        while(pos > 0 && out[pos - 1].occupancy < e.occupancy)
+            pos--;
         if(pos < cap) {
             size_t last = (count < cap) ? count : cap - 1;
-            for(size_t j = last; j > pos; j--) out[j] = out[j - 1];
+            for(size_t j = last; j > pos; j--)
+                out[j] = out[j - 1];
             out[pos] = e;
             if(count < cap) count++;
         }

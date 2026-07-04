@@ -25,9 +25,9 @@
 
 typedef struct {
     ScCadenceClass cls;
-    double period_s;    /* estimated fundamental; 0 for event-driven/seen-once (= null) */
-    double regularity;  /* 0..1, 1 = metronomic; 1 - min(1, CoV) (System §7a) */
-    int32_t samples;    /* number of inter-arrival intervals behind the estimate */
+    float period_s; /* estimated fundamental; 0 for event-driven/seen-once (= null) */
+    float regularity; /* 0..1, 1 = metronomic; 1 - min(1, CoV) (System §7a) */
+    int32_t samples; /* number of inter-arrival intervals behind the estimate */
 } ScCadenceEstimate;
 
 /* Estimate cadence from `n` reception timestamps (seconds; need not be pre-sorted). */
@@ -38,14 +38,14 @@ void sc_cadence_from_timestamps(const int64_t* ts_s, size_t n, ScCadenceEstimate
 typedef struct {
     int64_t last_ts;
     int32_t count;
-    double interval_sum;
-    double interval_sqsum;
+    float interval_sum;
+    float interval_sqsum;
     int32_t n_intervals;
-    double bin_width_s;               /* histogram bin width (seconds) */
+    float bin_width_s; /* histogram bin width (seconds) */
     int32_t hist[SC_CADENCE_HIST_BINS];
 } ScCadenceEstimator;
 
-void sc_cadence_init(ScCadenceEstimator* e, double bin_width_s);
+void sc_cadence_init(ScCadenceEstimator* e, float bin_width_s);
 void sc_cadence_observe(ScCadenceEstimator* e, int64_t ts_s);
 void sc_cadence_estimate(const ScCadenceEstimator* e, ScCadenceEstimate* out);
 

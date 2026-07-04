@@ -20,21 +20,21 @@
 typedef struct {
     ScFeatureVector fv;
     ScCadenceClass cadence_class; /* SC_CADENCE_NONE if unknown (soft feature) */
-    double period_s;              /* 0 if unknown */
+    float period_s; /* 0 if unknown */
 } ScKnnQuery;
 
 typedef struct {
     ScFeatureVector fv;
     ScCadenceClass cadence_class;
-    double period_s;
+    float period_s;
     const char* device_name; /* borrowed pointer */
-    int device_class;        /* CensusDeviceClass index, or -1 */
+    int device_class; /* CensusDeviceClass index, or -1 */
 } ScFingerprint;
 
 typedef struct {
-    int index;         /* index into the candidates array */
-    double distance;   /* gated weighted-Euclidean distance (lower = closer) */
-    double confidence; /* 0..1, distance-derived then cadence-adjusted */
+    int index; /* index into the candidates array */
+    float distance; /* gated weighted-Euclidean distance (lower = closer) */
+    float confidence; /* 0..1, distance-derived then cadence-adjusted */
 } ScKnnMatch;
 
 /* Match `q` against `n` candidates. Writes up to `topn` best matches (confidence desc)

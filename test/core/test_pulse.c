@@ -7,8 +7,15 @@ int main(void) {
 
     /* Two dominant widths: 300 (x6) and 900 (x3), signs alternate. */
     int32_t t[] = {
-        300, -300, 300, -300, 300, -300,   /* six 300s */
-        900, -900, 900,                     /* three 900s */
+        300,
+        -300,
+        300,
+        -300,
+        300,
+        -300, /* six 300s */
+        900,
+        -900,
+        900, /* three 900s */
     };
     ScPulseCluster c[3];
     size_t nc = sc_pulse_cluster(t, sizeof(t) / sizeof(t[0]), 0.25, c, 3);

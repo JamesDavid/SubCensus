@@ -35,19 +35,22 @@ void sc_diff_analyze(
         for(size_t f = 1; f < n_frames; f++) {
             int v = bit_at(frames, stride_bytes, f, b);
             ones += v;
-            if(v) seen1 = 1; else seen0 = 1;
+            if(v)
+                seen1 = 1;
+            else
+                seen0 = 1;
             if(v != prev) changes++;
             prev = v;
         }
 
         p.distinct = (seen0 && seen1) ? 2 : 1;
-        p.change_rate = (n_frames > 1) ? (double)changes / (double)(n_frames - 1) : 0.0;
+        p.change_rate = (n_frames > 1) ? (float)changes / (float)(n_frames - 1) : 0.0;
 
-        double p1 = (double)ones / (double)n_frames;
-        double p0 = 1.0 - p1;
-        double h = 0.0;
-        if(p1 > 0.0) h -= p1 * log2(p1);
-        if(p0 > 0.0) h -= p0 * log2(p0);
+        float p1 = (float)ones / (float)n_frames;
+        float p0 = 1.0 - p1;
+        float h = 0.0;
+        if(p1 > 0.0) h -= p1 * log2f(p1);
+        if(p0 > 0.0) h -= p0 * log2f(p0);
         p.entropy = h;
 
         if(p.distinct == 1) {

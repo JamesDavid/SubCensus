@@ -7,13 +7,15 @@
 /* --- small helpers (const-correct, no strtok) --- */
 
 static const char* line_end(const char* p, const char* end) {
-    while(p < end && *p != '\n' && *p != '\r') p++;
+    while(p < end && *p != '\n' && *p != '\r')
+        p++;
     return p;
 }
 
 static const char* next_line(const char* p, const char* end) {
     p = line_end(p, end);
-    while(p < end && (*p == '\n' || *p == '\r')) p++;
+    while(p < end && (*p == '\n' || *p == '\r'))
+        p++;
     return p;
 }
 
@@ -23,9 +25,11 @@ static int match_kv(const char* line, const char* lend, const char* key, char* d
     if((size_t)(lend - line) < klen) return 0;
     if(strncmp(line, key, klen) != 0) return 0;
     const char* v = line + klen;
-    while(v < lend && (*v == ' ' || *v == '\t')) v++;
+    while(v < lend && (*v == ' ' || *v == '\t'))
+        v++;
     const char* ve = lend;
-    while(ve > v && (ve[-1] == ' ' || ve[-1] == '\t')) ve--;
+    while(ve > v && (ve[-1] == ' ' || ve[-1] == '\t'))
+        ve--;
     size_t n = (size_t)(ve - v);
     if(n >= cap) n = cap - 1;
     memcpy(dst, v, n);
@@ -61,7 +65,8 @@ ScResult sc_sub_parse(
         } else if((size_t)(lend - p) >= 9 && strncmp(p, "RAW_Data:", 9) == 0) {
             const char* q = p + 9;
             while(q < lend) {
-                while(q < lend && (*q == ' ' || *q == '\t')) q++;
+                while(q < lend && (*q == ' ' || *q == '\t'))
+                    q++;
                 if(q >= lend) break;
                 char* qe = NULL;
                 long v = strtol(q, &qe, 10);
@@ -117,8 +122,8 @@ ScResult sc_sub_encode(
 
     size_t off = 0;
     int overflow = 0;
-    const char* preset = (meta && meta->preset[0]) ? meta->preset
-                                                    : "FuriHalSubGhzPresetOok650Async";
+    const char* preset = (meta && meta->preset[0]) ? meta->preset :
+                                                     "FuriHalSubGhzPresetOok650Async";
     const char* protocol = (meta && meta->protocol[0]) ? meta->protocol : "RAW";
     int32_t freq = meta ? meta->frequency : 0;
 
