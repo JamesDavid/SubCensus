@@ -15,12 +15,16 @@
 #include <notification/notification_messages.h>
 #include <storage/storage.h>
 
+#include "../shared/core/sc_feature.h"
+#include "census_brain.h"
 #include "census_camp_view.h"
 #include "census_freq.h"
 #include "census_recon.h"
 #include "census_storage.h"
 #include "census_worker.h"
 #include "scenes/subcensus_scene.h"
+
+#define CENSUS_REVIEW_MAX 64
 
 typedef enum {
     SubCensusViewSubmenu,
@@ -58,6 +62,13 @@ typedef struct {
     uint32_t camp_freq;
     bool live_sweep;
     bool recon_fresh;
+
+    /* Review state */
+    char review_subs[CENSUS_REVIEW_MAX][80];
+    uint32_t review_freqs[CENSUS_REVIEW_MAX];
+    size_t review_count;
+    size_t review_sel;
+    ScFeatureVector review_fv;
 
     CensusSettings settings;
 

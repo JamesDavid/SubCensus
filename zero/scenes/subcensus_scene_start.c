@@ -18,11 +18,6 @@ static void start_cb(void* context, uint32_t index) {
     view_dispatcher_send_custom_event(app->view_dispatcher, index);
 }
 
-static void start_todo(SubCensusApp* app, const char* msg) {
-    app->todo_msg = msg;
-    scene_manager_next_scene(app->scene_manager, SubCensusSceneTodo);
-}
-
 void subcensus_scene_start_on_enter(void* context) {
     SubCensusApp* app = context;
     Submenu* menu = app->submenu;
@@ -74,7 +69,7 @@ bool subcensus_scene_start_on_event(void* context, SceneManagerEvent event) {
             scene_manager_next_scene(app->scene_manager, SubCensusSceneCampPicker);
             return true;
         case StartItemReview:
-            start_todo(app, "Review (M8)");
+            scene_manager_next_scene(app->scene_manager, SubCensusSceneReview);
             return true;
         default:
             break;
