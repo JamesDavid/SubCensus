@@ -83,6 +83,21 @@ class ChecksumSpec:
     key: int = 0
 
 
+def compute(spec: ChecksumSpec, data: bytes) -> int:
+    """Recompute a checksum from a named spec (to verify it holds across a frame corpus)."""
+    if spec.kind == ChecksumKind.XOR:
+        return xor_bytes(data)
+    if spec.kind == ChecksumKind.SUM:
+        return add_bytes(data)
+    if spec.kind == ChecksumKind.CRC8:
+        return crc8(data, spec.poly, spec.init)
+    if spec.kind == ChecksumKind.CRC8LE:
+        return crc8le(data, spec.poly, spec.init)
+    if spec.kind == ChecksumKind.LFSR8:
+        return lfsr_digest8(data, spec.gen, spec.key)
+    raise ValueError(f"cannot compute checksum kind {spec.kind}")
+
+
 def checksum_search(data: bytes, target: int) -> ChecksumSpec | None:
     """Brute the common family against `target`; return the first match or None (§7b)."""
     if xor_bytes(data) == target:

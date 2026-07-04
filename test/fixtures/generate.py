@@ -95,6 +95,34 @@ def write_rtl_power(name: str) -> None:
     print(f"wrote rtl_power/{name}")
 
 
+def fieldmap_corpus_rows() -> list[str]:
+    """rtl_433-style events for one device with a raw `data` hex payload that varies across
+    receptions (System §7b differential corpus): byte0 static id, byte1 counter, byte2 sensor
+    value (tracks temperature_C for ground-truth correlation), byte3 = XOR checksum. 8 frames
+    60 s apart."""
+    import json as _json
+
+    rows = []
+    for i in range(8):
+        temp = 20 + i // 2  # slow-varying (changes every 2 frames), unlike the per-frame counter
+        b0, b1, b2 = 0xA5, i, temp
+        b3 = b0 ^ b1 ^ b2
+        data = f"{b0:02x}{b1:02x}{b2:02x}{b3:02x}"
+        t = f"12:{i:02d}:00"
+        rows.append(_json.dumps({
+            "time": f"2026-07-04T{t}", "model": "RawSensor", "id": 7, "freq": 433.92,
+            "rssi": -62.0, "snr": 11.0, "data": data, "temperature_C": temp,
+        }, separators=(",", ":")))
+    return rows
+
+
+def write_fieldmap_corpus(name: str) -> None:
+    d = HERE / "rtl433"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / name).write_text("\n".join(fieldmap_corpus_rows()) + "\n", encoding="utf-8", newline="\n")
+    print(f"wrote rtl433/{name}")
+
+
 def main() -> None:
     # A remote press = the same frame repeated 5x (Zero §7 repeat suppression territory).
     remote = ook_remote_frame()
@@ -107,6 +135,9 @@ def main() -> None:
 
     # rtl_power occupancy sweep (Pi §3 heatmap pass input).
     write_rtl_power("home_sweep.csv")
+
+    # field-map discovery corpus (System §7b differential + checksum + ground-truth).
+    write_fieldmap_corpus("fieldmap_corpus.jsonl")
 
 
 if __name__ == "__main__":

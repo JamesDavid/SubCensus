@@ -211,3 +211,9 @@ class Database:
             "SELECT ts FROM events WHERE device_id=? ORDER BY ts", (device_id,)
         ).fetchall()
         return [r["ts"] for r in rows]
+
+    def device_events(self, device_id: str) -> list[sqlite3.Row]:
+        """All events for a device in reception order (for the differential corpus, §7b)."""
+        return self.conn.execute(
+            "SELECT * FROM events WHERE device_id=? ORDER BY id", (device_id,)
+        ).fetchall()

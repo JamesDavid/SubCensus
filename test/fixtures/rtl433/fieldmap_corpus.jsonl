@@ -1,0 +1,8 @@
+{"time":"2026-07-04T12:00:00","model":"RawSensor","id":7,"freq":433.92,"rssi":-62.0,"snr":11.0,"data":"a50014b1","temperature_C":20}
+{"time":"2026-07-04T12:01:00","model":"RawSensor","id":7,"freq":433.92,"rssi":-62.0,"snr":11.0,"data":"a50114b0","temperature_C":20}
+{"time":"2026-07-04T12:02:00","model":"RawSensor","id":7,"freq":433.92,"rssi":-62.0,"snr":11.0,"data":"a50215b2","temperature_C":21}
+{"time":"2026-07-04T12:03:00","model":"RawSensor","id":7,"freq":433.92,"rssi":-62.0,"snr":11.0,"data":"a50315b3","temperature_C":21}
+{"time":"2026-07-04T12:04:00","model":"RawSensor","id":7,"freq":433.92,"rssi":-62.0,"snr":11.0,"data":"a50416b7","temperature_C":22}
+{"time":"2026-07-04T12:05:00","model":"RawSensor","id":7,"freq":433.92,"rssi":-62.0,"snr":11.0,"data":"a50516b6","temperature_C":22}
+{"time":"2026-07-04T12:06:00","model":"RawSensor","id":7,"freq":433.92,"rssi":-62.0,"snr":11.0,"data":"a50617b4","temperature_C":23}
+{"time":"2026-07-04T12:07:00","model":"RawSensor","id":7,"freq":433.92,"rssi":-62.0,"snr":11.0,"data":"a50717b5","temperature_C":23}

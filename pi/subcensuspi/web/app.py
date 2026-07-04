@@ -184,6 +184,23 @@ def create_app(db_path: str, place: str | None = None, places_dir: str | None = 
         finally:
             db.close()
 
+    @app.get("/api/device/{device_id}/fieldmap")
+    def api_fieldmap(device_id: str, hex_field: str = "data", ground_truth: str | None = None):
+        """Passive field-map discovery proposal for a device (System §7b). Seeds the dashboard
+        segment-labeling overlay. PROPOSAL only — RX-only, no active confirmation, user confirms."""
+        from ..fieldmap import analyze_device, proposal_to_dict
+
+        db = get_db()
+        try:
+            if db.get_device(device_id) is None:
+                raise HTTPException(status_code=404, detail="device not found")
+            proposal = analyze_device(db, device_id, hex_field=hex_field, ground_truth_field=ground_truth)
+        finally:
+            db.close()
+        if proposal is None:
+            raise HTTPException(status_code=422, detail="not enough frames / no raw payload for differential")
+        return proposal_to_dict(proposal)
+
     @app.post("/api/device/{device_id}/label")
     def api_label(
         device_id: str,
