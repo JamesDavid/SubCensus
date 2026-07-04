@@ -140,9 +140,14 @@ def _targets() -> list[tuple[Path, str]]:
     p = repo_paths()
     tax = Taxonomy.load(p["taxonomy"])
     schemas = load_all_schemas(p["schema_dir"])
+    tax_h = gen_taxonomy_header(tax)
+    schema_h = gen_schema_header(schemas)
     return [
-        (p["zero_taxonomy_h"], gen_taxonomy_header(tax)),
-        (p["zero_schema_h"], gen_schema_header(schemas)),
+        (p["zero_taxonomy_h"], tax_h),
+        (p["zero_schema_h"], schema_h),
+        # ESP firmware shares the CC1101 model -> same generated headers (System §10).
+        (p["esp_taxonomy_h"], tax_h),
+        (p["esp_schema_h"], schema_h),
     ]
 
 

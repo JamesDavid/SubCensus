@@ -36,7 +36,11 @@ def repo_paths(start: Path | None = None) -> dict[str, Path]:
         "tools": root / "tools",
         "test": root / "test",
         "zero": root / "zero",
-        # Generated artifacts (System §10) — regenerated, never hand-edited.
+        "esp": root / "esp",
+        # Generated artifacts (System §10) — regenerated, never hand-edited. Both the Zero FAP
+        # and the ESP firmware are consumers, regenerated together (System §10).
         "zero_taxonomy_h": root / "zero" / "census_taxonomy.h",
         "zero_schema_h": root / "zero" / "census_schema.h",
+        "esp_taxonomy_h": root / "esp" / "src" / "census_taxonomy.h",
+        "esp_schema_h": root / "esp" / "src" / "census_schema.h",
     }

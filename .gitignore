@@ -17,6 +17,11 @@ a.out
 *.gcno
 *.gcov
 
+# --- PlatformIO (ESP) ---
+esp/.pio/
+.pio/
+esp/test/build/
+
 # --- Python ---
 __pycache__/
 *.py[cod]
