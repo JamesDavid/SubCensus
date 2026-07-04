@@ -70,6 +70,18 @@ def create_app(db_path: str, place: str | None = None, places_dir: str | None = 
             },
         )
 
+    @app.get("/api/places")
+    def api_places():
+        """Distinct places present, plus the configured active place (Pi §9a)."""
+        db = get_db()
+        try:
+            places = set(db.distinct_places())
+        finally:
+            db.close()
+        if app.state.place:
+            places.add(app.state.place)
+        return {"active": app.state.place, "places": sorted(places)}
+
     @app.get("/api/devices")
     def api_devices(place: str | None = None):
         db = get_db()

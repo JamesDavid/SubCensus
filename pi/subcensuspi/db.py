@@ -135,7 +135,18 @@ class Database:
 
     # --- reads ---
 
-    def device_count(self) -> int:
+    def distinct_places(self) -> list[str]:
+        rows = self.conn.execute(
+            "SELECT DISTINCT place FROM devices WHERE place IS NOT NULL AND place<>''"
+            " ORDER BY place"
+        ).fetchall()
+        return [r["place"] for r in rows]
+
+    def device_count(self, place: str | None = None) -> int:
+        if place:
+            return self.conn.execute(
+                "SELECT COUNT(*) c FROM devices WHERE place=?", (place,)
+            ).fetchone()["c"]
         return self.conn.execute("SELECT COUNT(*) c FROM devices").fetchone()["c"]
 
     def event_count(self) -> int:
