@@ -47,13 +47,26 @@ def pulse_summary_from_event(obj: dict) -> str:
         summary["mod"] = obj["mod"]
     if "codes" in obj:
         summary["codes"] = obj["codes"]
-    # if a raw timing array is available, characterize it like the Zero would
+    # if a raw timing array is available, characterize it like the Zero would and embed the
+    # full feature vector so a confirmed label can seed the shared brain (System §6, M7).
     timings = obj.get("timings") or obj.get("pulses_us")
     if isinstance(timings, list) and timings:
         clusters = pulse.cluster(timings, 0.25, 3)
         summary["sym_widths_us"] = [c.center_us for c in clusters]
         freq_hz = int(round(float(obj.get("freq", 0)) * 1_000_000)) if obj.get("freq") else 0
-        fv = feature.compute(timings, freq_hz, feature.MOD_OOK)
+        mod = feature.MOD_OOK
+        if str(obj.get("mod", "")).upper() in ("FSK", "GFSK", "2-FSK"):
+            mod = feature.MOD_2FSK
+        fv = feature.compute(timings, freq_hz, mod)
         summary["n_symbols"] = fv.n_symbols
         summary["est_bitrate"] = fv.est_bitrate
+        summary["fv"] = {
+            "freq_bin": fv.freq_bin,
+            "modulation": fv.modulation,
+            "sym_dur_us": fv.sym_dur_us,
+            "n_symbols": fv.n_symbols,
+            "est_bitrate": fv.est_bitrate,
+            "preamble_len": fv.preamble_len,
+            "repeat_count": fv.repeat_count,
+        }
     return json.dumps(summary, separators=(",", ":"), sort_keys=True)
