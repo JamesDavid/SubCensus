@@ -9,9 +9,12 @@
  */
 
 #include <Arduino.h>
+#include <ArduinoOTA.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
+#include <HTTPClient.h>
 #include <LittleFS.h>
+#include <PubSubClient.h>
 #include <SPI.h>
 #include <WiFi.h>
 #include <time.h>
@@ -22,6 +25,7 @@ extern "C" {
 #include "census_taxonomy.h"
 #include "esp_census_log.h"
 #include "esp_fingerprints.h"
+#include "esp_mqtt.h"
 #include "esp_occupancy_csv.h"
 #include "esp_place.h"
 #include "esp_rotation.h"
@@ -47,6 +51,9 @@ static SPIClass g_vspi(VSPI);
 static bool g_cc1101_present = false;
 static uint8_t g_cc1101_version = 0;
 static volatile bool g_camp_running = false;
+static WiFiClient g_wifi_client;
+static PubSubClient g_mqtt(g_wifi_client);
+static const char* MQTT_BASE = "subcensusesp";
 
 // --- CC1101 thin VSPI access (full RMT capture driver is TODO(hw)) ---
 
@@ -107,6 +114,7 @@ static void append_line(const char* path, const char* line) {
 
 static void place_meta_path(const char* id, char* out, size_t cap);
 static void place_meta_write(const char* id, const char* name);
+static void mqtt_publish_capture(int32_t freq, float rssi, const char* match);
 
 static void load_settings() {
     esp_settings_defaults(&g_settings);
@@ -391,6 +399,7 @@ static void process_capture(
              ts, (long)freq_hz, (double)rssi, preset, (long)fv.n_symbols, sub_rel,
              matched ? mname : "", matched ? mclass : "", (double)(matched ? mconf : 0.0f), source);
     g_ws.textAll(msg);
+    mqtt_publish_capture(freq_hz, rssi, matched ? mname : "");
     Serial.printf("SC scene=camp action=capture freq=%ld rssi=%.1f source=%s\n",
                   (long)freq_hz, (double)rssi, source);
 }
@@ -544,6 +553,75 @@ static void wifi_start() {
     configTime(0, 0, "pool.ntp.org", "time.nist.gov");
 }
 
+// --- MQTT -> Home Assistant (Esp §6). Live broker connectivity is TODO(hw) ---
+
+static bool g_mqtt_discovered = false;
+
+static void mqtt_publish_discovery() {
+    char topic[128], payload[512];
+    esp_mqtt_discovery_topic(MQTT_BASE, "node", "rssi", topic, sizeof(topic));
+    esp_mqtt_discovery_payload(MQTT_BASE, "node", "SubCensusEsp node", "rssi", "Last RSSI",
+                               "{{ value_json.rssi }}", "dBm", "signal_strength", payload, sizeof(payload));
+    g_mqtt.publish(topic, payload, true); // retained
+    g_mqtt_discovered = true;
+}
+
+static void mqtt_ensure() {
+    if(!g_settings.mqtt_enabled || WiFi.status() != WL_CONNECTED) return;
+    if(g_mqtt.connected()) return;
+    g_mqtt.setServer(g_settings.mqtt_host, 1883);
+    if(g_mqtt.connect("subcensusesp")) { // TODO(hw): needs a reachable broker
+        if(g_settings.mqtt_enabled) mqtt_publish_discovery();
+    }
+}
+
+static void mqtt_publish_capture(int32_t freq, float rssi, const char* match) {
+    if(!g_settings.mqtt_enabled || !g_mqtt.connected()) return;
+    if(!g_mqtt_discovered) mqtt_publish_discovery();
+    char topic[96], msg[192];
+    esp_mqtt_state_topic(MQTT_BASE, "node", topic, sizeof(topic));
+    snprintf(msg, sizeof(msg), "{\"rssi\":%.1f,\"freq_hz\":%ld,\"match\":\"%s\"}",
+             (double)rssi, (long)freq, match ? match : "");
+    g_mqtt.publish(topic, msg);
+}
+
+// --- brain sync over WiFi (Esp §6): pull/push signatures/ to participate in the shared brain.
+// Host-side build_signatures.py remains the merge point (System §8). Live HTTP is TODO(hw). ---
+
+static bool brain_pull(const char* base_url) {
+    if(WiFi.status() != WL_CONNECTED) return false;
+    HTTPClient http;
+    bool ok = true;
+    const char* files[] = {"protocol_map.csv", "fingerprints.csv"};
+    for(auto fn : files) {
+        char url[160], path[96], sig[64];
+        snprintf(url, sizeof(url), "%s/%s", base_url, fn);
+        http.begin(g_wifi_client, url);
+        int code = http.GET();
+        if(code == 200) {
+            esp_signatures_dir(FS_BASE, sig, sizeof(sig));
+            snprintf(path, sizeof(path), "%s/%s", sig, fn);
+            File f = LittleFS.open(path, "w");
+            if(f) {
+                http.writeToStream(&f);
+                f.close();
+            }
+        } else {
+            ok = false;
+        }
+        http.end();
+    }
+    load_fingerprints();
+    return ok;
+}
+
+// --- OTA (Esp §6) ---
+
+static void ota_setup() {
+    ArduinoOTA.setHostname("subcensusesp");
+    ArduinoOTA.begin(); // TODO(hw): exercised once flashed + on WiFi
+}
+
 // --- web ---
 
 static const char INDEX_HTML[] PROGMEM =
@@ -645,6 +723,18 @@ static void web_start() {
     });
     g_server.on("/api/places", HTTP_GET, [](AsyncWebServerRequest* req) {
         req->send(200, "application/json", places_json());
+    });
+    // pull the global signatures/ brain from a host over WiFi (Esp §6). build_signatures.py
+    // remains the merge point (System §8). POST /api/brain/sync  url=http://host/signatures
+    g_server.on("/api/brain/sync", HTTP_POST, [](AsyncWebServerRequest* req) {
+        String url = req->hasParam("url", true) ? req->getParam("url", true)->value() : "";
+        if(!url.length()) {
+            req->send(400, "application/json", "{\"error\":\"url required\"}");
+            return;
+        }
+        bool ok = brain_pull(url.c_str());
+        req->send(ok ? 200 : 502, "application/json",
+                  ok ? "{\"ok\":true}" : "{\"ok\":false,\"note\":\"pull failed (needs a reachable host)\"}");
     });
     g_server.on("/api/place", HTTP_POST, [](AsyncWebServerRequest* req) {
         String action = req->hasParam("action", true) ? req->getParam("action", true)->value() : "";
@@ -847,6 +937,7 @@ void setup() {
     load_fingerprints(); // classification brain (System §6)
     wifi_start();
     web_start();
+    ota_setup();
 
     uint8_t probe[] = {0xDE, 0xAD};
     Serial.printf("SC core_ok crc=%u place=%s\n",
@@ -854,6 +945,9 @@ void setup() {
 }
 
 void loop() {
+    ArduinoOTA.handle();
+    mqtt_ensure();
+    g_mqtt.loop();
     g_ws.cleanupClients();
     delay(500);
 }
