@@ -76,4 +76,6 @@ Per-target build + test instructions live in each target's README (linked above)
   sweep/recon/classify/replay) pending — the radio-heavy half.
 - **SubCensusPi** — complete: M0–M9 (collector → SQLite, dashboard, multi-dongle, unknowns,
   MQTT/HA, occupancy pass, shared brain, Places, field-map discovery). 51 tests green.
-- **SubCensusEsp** — in progress.
+- **SubCensusEsp** — non-optional milestones complete: M1–M5 + M7 (skeleton, RMT capture +
+  Camp, Recon/Sweep, classification, full web UI, MQTT/HA + brain sync + OTA). Optional M6
+  (SD) / M8 (replay/edit-TX) remain. 8 native + 7 web-driver tests green; `pio run` clean.
