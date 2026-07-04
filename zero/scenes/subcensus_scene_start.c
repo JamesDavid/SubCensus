@@ -68,7 +68,7 @@ bool subcensus_scene_start_on_event(void* context, SceneManagerEvent event) {
             start_todo(app, "Recon results\n(M4)");
             return true;
         case StartItemSweep:
-            start_todo(app, "Sweep (M3)");
+            scene_manager_next_scene(app->scene_manager, SubCensusSceneSweep);
             return true;
         case StartItemCamp:
             scene_manager_next_scene(app->scene_manager, SubCensusSceneCampPicker);

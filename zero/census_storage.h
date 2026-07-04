@@ -88,4 +88,8 @@ bool census_place_delete(Storage* storage, const char* place_id);
 void census_place_dir(const char* place_id, char* out, size_t cap);
 void census_place_file(const char* place_id, const char* filename, char* out, size_t cap);
 
+/* Load watchlist frequencies (freq_hz column) for a place into out[cap]; returns the count.
+ * 0 if the watchlist is absent/empty (Sweep then falls back to the preset list, System §9). */
+size_t census_watchlist_freqs(Storage* storage, const char* place_id, uint32_t* out, size_t cap);
+
 #endif /* CENSUS_STORAGE_H */

@@ -279,6 +279,34 @@ bool census_place_delete(Storage* storage, const char* place_id) {
     return storage_simply_remove_recursive(storage, dir);
 }
 
+size_t census_watchlist_freqs(Storage* storage, const char* place_id, uint32_t* out, size_t cap) {
+    char path[160];
+    census_place_file(place_id, "watchlist.csv", path, sizeof(path));
+    File* f = storage_file_alloc(storage);
+    size_t n = 0;
+    if(storage_file_open(f, path, FSAM_READ, FSOM_OPEN_EXISTING)) {
+        char line[128];
+        size_t li = 0;
+        bool header = true;
+        char c;
+        while(n < cap && storage_file_read(f, &c, 1) == 1) {
+            if(c == '\n' || li >= sizeof(line) - 1) {
+                line[li] = '\0';
+                if(!header && li > 0) {
+                    out[n++] = (uint32_t)strtoul(line, NULL, 10); /* first column = freq_hz */
+                }
+                header = false;
+                li = 0;
+            } else if(c != '\r') {
+                line[li++] = c;
+            }
+        }
+    }
+    storage_file_close(f);
+    storage_file_free(f);
+    return n;
+}
+
 bool census_storage_init(Storage* storage, CensusSettings* s) {
     FS_Error e = storage_common_mkdir(storage, CENSUS_BASE_DIR);
     if(e != FSE_OK && e != FSE_EXIST) return false;
