@@ -19,13 +19,16 @@
 extern "C" {
 #include "census_schema.h"
 #include "esp_capture.h"
+#include "census_taxonomy.h"
 #include "esp_census_log.h"
+#include "esp_fingerprints.h"
 #include "esp_occupancy_csv.h"
 #include "esp_place.h"
 #include "esp_rotation.h"
 #include "esp_settings.h"
 #include "sc_crc.h"
 #include "sc_feature.h"
+#include "sc_knn.h"
 #include "sc_occupancy.h"
 #include "sc_sub.h"
 }
@@ -166,7 +169,58 @@ static void rotate_captures() {
     }
 }
 
-// --- the shared processing path: timings -> feature -> .sub + census_log + WS broadcast ---
+// --- classification brain (System §6): fingerprints.csv -> gated k-NN ---
+
+#define MAX_FPS 64
+static ScFingerprint g_fps[MAX_FPS];
+static char g_fp_names[MAX_FPS][32];
+static size_t g_fp_count = 0;
+
+static void load_fingerprints() {
+    g_fp_count = 0;
+    char sig[64], path[96];
+    esp_signatures_dir(FS_BASE, sig, sizeof(sig));
+    snprintf(path, sizeof(path), "%s/fingerprints.csv", sig);
+    if(!LittleFS.exists(path)) return;
+    File f = LittleFS.open(path, "r");
+    if(!f) return;
+    bool header = true;
+    while(f.available() && g_fp_count < MAX_FPS) {
+        String line = f.readStringUntil('\n');
+        if(header) {
+            header = false;
+            continue;
+        }
+        if(line.length() < 5) continue;
+        if(esp_fingerprint_parse_line(line.c_str(), &g_fps[g_fp_count],
+                                      g_fp_names[g_fp_count], sizeof(g_fp_names[0]))) {
+            g_fp_count++;
+        }
+    }
+    f.close();
+    Serial.printf("SC brain fingerprints=%u\n", (unsigned)g_fp_count);
+}
+
+// Returns true if a candidate was found (advisory only — never auto-relabels, System §6).
+static bool classify(const ScFeatureVector* fv, const char** name, const char** cls, float* conf) {
+    if(g_fp_count == 0 || !g_settings.match_db) return false;
+    ScKnnQuery q;
+    memset(&q, 0, sizeof(q));
+    q.fv = *fv;
+    q.cadence_class = SC_CADENCE_NONE; // walk-around/single capture: cadence is a soft booster
+    ScKnnMatch m[3];
+    size_t k = sc_knn_match(&q, g_fps, g_fp_count, m, 3);
+    if(k == 0) return false;
+    int idx = m[0].index;
+    *name = g_fps[idx].device_name ? g_fps[idx].device_name : "";
+    *cls = (g_fps[idx].device_class >= 0)
+               ? census_class_id((CensusDeviceClass)g_fps[idx].device_class)
+               : "";
+    *conf = m[0].confidence;
+    return true;
+}
+
+// --- the shared processing path: timings -> feature -> classify -> .sub + census_log + WS ---
 
 static ScModulation preset_modulation(uint8_t preset) {
     return (preset == EspCaptureFsk) ? SC_MOD_2FSK : SC_MOD_OOK;
@@ -210,7 +264,13 @@ static void process_capture(
         }
     }
 
-    // census_log row (classification match_* filled in M4)
+    // classify via gated k-NN against the brain (System §6) — advisory, never auto-relabels
+    const char* mname = "";
+    const char* mclass = "";
+    float mconf = 0.0f;
+    bool matched = classify(&fv, &mname, &mclass, &mconf);
+
+    // census_log row
     EspCensusRow row = {};
     row.ts_iso = ts;
     row.freq_hz = freq_hz;
@@ -220,9 +280,10 @@ static void process_capture(
     row.sub_file = sub_rel;
     row.protocol = "";
     row.key = "";
-    row.match_name = "";
-    row.match_class = "";
-    row.match_source = "";
+    row.match_name = matched ? mname : "";
+    row.match_class = matched ? mclass : "";
+    row.match_conf = matched ? mconf : 0.0f;
+    row.match_source = matched ? "fingerprint" : "";
     row.label = "";
     char line[256];
     if(esp_census_log_row(&row, line, sizeof(line)) > 0) {
@@ -231,12 +292,14 @@ static void process_capture(
         append_line(log, line);
     }
 
-    // WebSocket live feed (Esp §5)
-    char msg[256];
+    // WebSocket live feed (Esp §5) — includes the best match + confidence
+    char msg[320];
     snprintf(msg, sizeof(msg),
              "{\"ts\":\"%s\",\"freq_hz\":%ld,\"rssi\":%.1f,\"preset\":\"%s\","
-             "\"n_symbols\":%ld,\"sub\":\"%s\",\"source\":\"%s\"}",
-             ts, (long)freq_hz, (double)rssi, preset, (long)fv.n_symbols, sub_rel, source);
+             "\"n_symbols\":%ld,\"sub\":\"%s\",\"match\":\"%s\",\"match_class\":\"%s\","
+             "\"conf\":%.2f,\"source\":\"%s\"}",
+             ts, (long)freq_hz, (double)rssi, preset, (long)fv.n_symbols, sub_rel,
+             matched ? mname : "", matched ? mclass : "", (double)(matched ? mconf : 0.0f), source);
     g_ws.textAll(msg);
     Serial.printf("SC scene=camp action=capture freq=%ld rssi=%.1f source=%s\n",
                   (long)freq_hz, (double)rssi, source);
@@ -504,6 +567,91 @@ static void web_start() {
             camp_stop();
         req->send(200, "application/json", start ? "{\"camp\":true}" : "{\"camp\":false}");
     });
+    // Review candidates for a capture: recompute its feature vector from the .sub and run
+    // k-NN (System §6). GET /api/candidates?sub=<place-relative path>
+    g_server.on("/api/candidates", HTTP_GET, [](AsyncWebServerRequest* req) {
+        if(!req->hasParam("sub")) {
+            req->send(400, "application/json", "{\"error\":\"sub param required\"}");
+            return;
+        }
+        char abs[192];
+        place_file(req->getParam("sub")->value().c_str(), abs, sizeof(abs));
+        if(!LittleFS.exists(abs)) {
+            req->send(404, "application/json", "{\"error\":\"capture not found\"}");
+            return;
+        }
+        File f = LittleFS.open(abs, "r");
+        String text = f.readString();
+        f.close();
+        ScSubMeta meta;
+        static int32_t timings[1024];
+        size_t tn = 0;
+        sc_sub_parse(text.c_str(), text.length(), &meta, timings, 1024, &tn);
+        ScFeatureVector fv;
+        sc_feature_compute(timings, tn, meta.frequency, preset_modulation(g_settings.capture_preset), &fv);
+        ScKnnQuery q;
+        memset(&q, 0, sizeof(q));
+        q.fv = fv;
+        q.cadence_class = SC_CADENCE_NONE;
+        ScKnnMatch m[3];
+        size_t k = sc_knn_match(&q, g_fps, g_fp_count, m, 3);
+        String out = "{\"candidates\":[";
+        for(size_t i = 0; i < k; i++) {
+            int idx = m[i].index;
+            if(i) out += ",";
+            out += "{\"name\":\"" + String(g_fps[idx].device_name ? g_fps[idx].device_name : "") +
+                   "\",\"class\":\"" +
+                   String(g_fps[idx].device_class >= 0
+                              ? census_class_id((CensusDeviceClass)g_fps[idx].device_class)
+                              : "") +
+                   "\",\"confidence\":" + String(m[i].confidence, 3) + ",\"source\":\"fingerprint\"}";
+        }
+        out += "]}";
+        req->send(200, "application/json", out);
+    });
+    // Confirm a label -> append the capture's feature vector to the brain (System §6
+    // active-learning loop). POST /api/label  sub=<path>&device_class=<id>[&name=]
+    g_server.on("/api/label", HTTP_POST, [](AsyncWebServerRequest* req) {
+        if(!req->hasParam("sub", true) || !req->hasParam("device_class", true)) {
+            req->send(400, "application/json", "{\"error\":\"sub + device_class required\"}");
+            return;
+        }
+        String sub = req->getParam("sub", true)->value();
+        String cls = req->getParam("device_class", true)->value();
+        String name = req->hasParam("name", true) ? req->getParam("name", true)->value() : "";
+        if(census_class_from_id(cls.c_str()) < 0 && cls.length()) {
+            req->send(400, "application/json", "{\"error\":\"unknown device_class\"}");
+            return;
+        }
+        char abs[192];
+        place_file(sub.c_str(), abs, sizeof(abs));
+        if(!LittleFS.exists(abs)) {
+            req->send(404, "application/json", "{\"error\":\"capture not found\"}");
+            return;
+        }
+        File f = LittleFS.open(abs, "r");
+        String text = f.readString();
+        f.close();
+        ScSubMeta meta;
+        static int32_t timings[1024];
+        size_t tn = 0;
+        sc_sub_parse(text.c_str(), text.length(), &meta, timings, 1024, &tn);
+        ScFeatureVector fv;
+        sc_feature_compute(timings, tn, meta.frequency, preset_modulation(g_settings.capture_preset), &fv);
+
+        char id[24];
+        snprintf(id, sizeof(id), "fp%08lx", (unsigned long)millis());
+        char row[192];
+        if(esp_fingerprint_row(id, &fv, name.c_str(), cls.c_str(), row, sizeof(row)) > 0) {
+            char sig[64], path[96];
+            esp_signatures_dir(FS_BASE, sig, sizeof(sig));
+            snprintf(path, sizeof(path), "%s/fingerprints.csv", sig);
+            if(!LittleFS.exists(path)) append_line(path, FINGERPRINTS_HEADER);
+            append_line(path, row);
+            load_fingerprints(); // the brain gets smarter with use
+        }
+        req->send(200, "application/json", "{\"ok\":true}");
+    });
     g_server.on(
         "/api/debug/inject", HTTP_POST, [](AsyncWebServerRequest* req) { (void)req; },
         nullptr,
@@ -528,6 +676,7 @@ void setup() {
     cc1101_init();
     Serial.printf("SC cc1101 present=%d version=0x%02x\n", g_cc1101_present, g_cc1101_version);
 
+    load_fingerprints(); // classification brain (System §6)
     wifi_start();
     web_start();
 
