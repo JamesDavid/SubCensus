@@ -91,24 +91,8 @@ bool subcensus_scene_review_detail_on_event(void* context, SceneManagerEvent eve
         return true;
     }
     if(event.event == DetailReplay) {
-        uint32_t freq = app->review_freqs[app->review_sel];
-        /* Replay is the ONLY TX path — gated by the firmware TX allow-list (§6). Live TX needs
-         * hardware (TODO(hw)); the guard is enforced here. */
-        bool allowed = sc_freq_in_cc1101_band((int32_t)freq) &&
-                       furi_hal_region_is_frequency_allowed(freq);
-        if(!allowed) {
-            notification_message(app->notifications, &sequence_error);
-            FURI_LOG_I(
-                "SubCensus",
-                "SC scene=review action=replay_blocked freq=%lu",
-                (unsigned long)freq);
-        } else {
-            notification_message(app->notifications, &sequence_blink_magenta_10);
-            FURI_LOG_I(
-                "SubCensus",
-                "SC scene=review action=replay freq=%lu (TODO hw async_tx)",
-                (unsigned long)freq);
-        }
+        /* Replay-to-identify -> the confirm-gated TX flow (§6, No defaulted). */
+        scene_manager_next_scene(app->scene_manager, SubCensusSceneReplayConfirm);
         return true;
     }
     return false;
