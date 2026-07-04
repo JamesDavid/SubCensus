@@ -13,6 +13,7 @@ import sys
 from ..config import Config
 from ..db import Database
 from .collector import Collector
+from .multi import SourceStream, run_multi
 from .rtl433 import replay_cu8, replay_file, rtl433_available, stream_live
 
 
@@ -37,9 +38,12 @@ def main(argv: list[str] | None = None) -> int:
         if not rtl433_available():
             print("rtl_433 not installed and no --replay given; nothing to do.", file=sys.stderr)
             return 2
-        for dongle in cfg.dongles:  # pragma: no cover - needs hardware
-            src = dongle.serial or ",".join(dongle.freqs)
-            collector.process_stream(stream_live(dongle), source=src)
+        # multi-dongle parallel + source tagging (Pi §3): one producer per dongle,
+        # single DB-writer consumer. TODO(hw): needs real dongles.
+        streams = [  # pragma: no cover - needs hardware
+            SourceStream(stream_live(d), d.serial or ",".join(d.freqs)) for d in cfg.dongles
+        ]
+        run_multi(collector, streams)  # pragma: no cover - needs hardware
 
     s = collector.stats
     print(f"lines={s.lines} decoded={s.decoded} unknowns={s.unknowns} skipped={s.skipped}")

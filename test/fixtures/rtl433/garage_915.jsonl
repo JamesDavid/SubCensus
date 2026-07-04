@@ -1,0 +1,4 @@
+{"time":"2026-07-04T12:00:02","model":"Acurite-606TX","id":88,"freq":915.0,"rssi":-58.0,"snr":14.0,"temperature_C":18.0}
+{"time":"2026-07-04T12:00:07","model":"ERT-SCM","id":770123,"freq":915.0,"rssi":-72.0,"snr":7.5,"consumption":41234}
+{"time":"2026-07-04T12:00:12","model":"ERT-SCM","id":770123,"freq":915.0,"rssi":-71.0,"snr":8.0,"consumption":41235}
+{"time":"2026-07-04T12:00:33","model":"Acurite-606TX","id":88,"freq":915.0,"rssi":-59.0,"snr":13.5,"temperature_C":18.1}
