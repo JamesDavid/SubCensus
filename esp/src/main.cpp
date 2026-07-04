@@ -20,11 +20,13 @@ extern "C" {
 #include "census_schema.h"
 #include "esp_capture.h"
 #include "esp_census_log.h"
+#include "esp_occupancy_csv.h"
 #include "esp_place.h"
 #include "esp_rotation.h"
 #include "esp_settings.h"
 #include "sc_crc.h"
 #include "sc_feature.h"
+#include "sc_occupancy.h"
 #include "sc_sub.h"
 }
 
@@ -240,6 +242,89 @@ static void process_capture(
                   (long)freq_hz, (double)rssi, source);
 }
 
+// --- Recon: occupancy.csv + watchlist.csv (Esp §3, System §9) ---
+
+static void write_occupancy_and_watchlist(const ScOccupancyBin* bins, size_t n) {
+    char occ_path[128], wl_path[128];
+    place_file("occupancy.csv", occ_path, sizeof(occ_path));
+    place_file("watchlist.csv", wl_path, sizeof(wl_path));
+
+    File occ = LittleFS.open(occ_path, "w");
+    if(occ) {
+        occ.println(OCCUPANCY_HEADER);
+        char row[128], ts[24];
+        iso_now(ts, sizeof(ts));
+        for(size_t i = 0; i < n; i++) {
+            if(esp_occupancy_row(&bins[i], ts, row, sizeof(row)) > 0) occ.println(row);
+        }
+        occ.close();
+    }
+
+    // derive watchlist from occupancy (shared logic, System §9)
+    static ScWatchlistEntry wl[64];
+    size_t nwl = sc_watchlist_from_occupancy(bins, n, 0.10f, 12.0f, wl, 64);
+    File w = LittleFS.open(wl_path, "w");
+    if(w) {
+        w.println(WATCHLIST_HEADER);
+        char row[128];
+        for(size_t i = 0; i < nwl; i++) {
+            if(esp_watchlist_row(&wl[i], "recon", row, sizeof(row)) > 0) w.println(row);
+        }
+        w.close();
+    }
+}
+
+static void recon_reset() {
+    write_occupancy_and_watchlist(nullptr, 0);
+}
+
+// Fixture recon: synthesize a few bins through the shared occupancy accumulators so the
+// occupancy -> watchlist derivation is exercised on-device with NO live RF (Esp §3.4).
+// The real stepped-RSSI sweep is TODO(hw).
+static void recon_fixture() {
+    struct {
+        int32_t freq;
+        float base;
+        int hot_of_10;
+    } spec[] = {{433920000, -97, 10}, {315000000, -98, 5}, {915000000, -99, 8}, {390000000, -96, 0}};
+    static ScOccupancyBin bins[8];
+    size_t n = 0;
+    for(auto& s : spec) {
+        ScOccupancyAccum a;
+        sc_occupancy_accum_init(&a, s.freq);
+        float threshold = s.base + 12.0f;
+        for(int i = 0; i < 10; i++) {
+            float rssi = (i < s.hot_of_10) ? (s.base + 40.0f) : s.base; // hot vs quiet
+            sc_occupancy_accum_sample(&a, rssi, threshold, 1000 + i);
+        }
+        sc_occupancy_accum_finish(&a, &bins[n++]);
+    }
+    write_occupancy_and_watchlist(bins, n);
+    Serial.printf("SC scene=recon action=fixture bins=%u\n", (unsigned)n);
+}
+
+// Sweep/Camp consume the watchlist (System §9). Load its frequencies into freqs[].
+static size_t load_watchlist_freqs(int32_t* freqs, size_t cap) {
+    char wl_path[128];
+    place_file("watchlist.csv", wl_path, sizeof(wl_path));
+    if(!LittleFS.exists(wl_path)) return 0;
+    File f = LittleFS.open(wl_path, "r");
+    if(!f) return 0;
+    size_t n = 0;
+    bool header = true;
+    while(f.available() && n < cap) {
+        String line = f.readStringUntil('\n');
+        if(header) {
+            header = false;
+            continue;
+        }
+        ScWatchlistEntry e;
+        if(esp_watchlist_parse_line(line.c_str(), &e)) freqs[n++] = e.freq_hz;
+    }
+    f.close();
+    return n;
+}
+
 // --- Camp mode (Esp §3) — capture pinned to its own core; live RMT/RSSI is TODO(hw) ---
 
 static void camp_task(void* arg) {
@@ -261,6 +346,36 @@ static void camp_start() {
 
 static void camp_stop() {
     g_camp_running = false;
+}
+
+// Sweep: cycle the watchlist (or preset list), dwell + sample RSSI, capture on threshold
+// (Esp §3, inherits the Zero pipeline). Live RSSI/capture is TODO(hw).
+static void sweep_task(void* arg) {
+    (void)arg;
+    static int32_t freqs[64];
+    size_t nf = load_watchlist_freqs(freqs, 64);
+    if(nf == 0) {
+        // no watchlist -> fall back to the preset list (US ISM), never blocked (System §9)
+        static int32_t preset[] = {315000000, 390000000, 433920000, 915000000};
+        for(size_t i = 0; i < 4; i++) freqs[i] = preset[i];
+        nf = 4;
+    }
+    size_t idx = 0;
+    while(g_camp_running) { // reuse the running flag; one monitor at a time
+        int32_t freq = freqs[idx % nf];
+        idx++;
+        // TODO(hw): tune CC1101 to `freq`, dwell g_settings.dwell_ms sampling RSSI; on
+        // >= threshold RMT-capture and process_capture().
+        (void)freq;
+        vTaskDelay(pdMS_TO_TICKS(g_settings.dwell_ms ? g_settings.dwell_ms : 80));
+    }
+    vTaskDelete(nullptr);
+}
+
+static void sweep_start() {
+    if(g_camp_running) return;
+    g_camp_running = true;
+    xTaskCreatePinnedToCore(sweep_task, "sweep", 4096, nullptr, 1, nullptr, 0);
 }
 
 // --- networking ---
@@ -343,6 +458,43 @@ static void web_start() {
         } else {
             req->send(200, "text/csv", CENSUS_LOG_HEADER "\n");
         }
+    });
+    g_server.on("/api/occupancy", HTTP_GET, [](AsyncWebServerRequest* req) {
+        char p[128];
+        place_file("occupancy.csv", p, sizeof(p));
+        if(LittleFS.exists(p))
+            req->send(LittleFS, p, "text/csv");
+        else
+            req->send(200, "text/csv", OCCUPANCY_HEADER "\n");
+    });
+    g_server.on("/api/watchlist", HTTP_GET, [](AsyncWebServerRequest* req) {
+        char p[128];
+        place_file("watchlist.csv", p, sizeof(p));
+        if(LittleFS.exists(p))
+            req->send(LittleFS, p, "text/csv");
+        else
+            req->send(200, "text/csv", WATCHLIST_HEADER "\n");
+    });
+    g_server.on("/api/recon", HTTP_POST, [](AsyncWebServerRequest* req) {
+        String action = req->hasParam("action", true) ? req->getParam("action", true)->value() : "";
+        if(action == "reset") {
+            recon_reset();
+        } else if(action == "fixture") {
+            recon_fixture(); // §3.4 no-RF path exercising occupancy -> watchlist
+        } else {
+            // TODO(hw): live stepped-RSSI sweep (accumulate/fresh, System §9)
+            req->send(202, "application/json", "{\"ok\":true,\"note\":\"live recon needs hardware\"}");
+            return;
+        }
+        req->send(200, "application/json", "{\"ok\":true}");
+    });
+    g_server.on("/api/sweep", HTTP_POST, [](AsyncWebServerRequest* req) {
+        bool start = req->hasParam("start", true) ? req->getParam("start", true)->value() != "0" : true;
+        if(start)
+            sweep_start();
+        else
+            camp_stop();
+        req->send(200, "application/json", start ? "{\"sweep\":true}" : "{\"sweep\":false}");
     });
     g_server.on("/api/camp", HTTP_POST, [](AsyncWebServerRequest* req) {
         bool start = req->hasParam("start", true) ? req->getParam("start", true)->value() != "0" : true;
