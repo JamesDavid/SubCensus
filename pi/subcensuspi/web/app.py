@@ -82,6 +82,41 @@ def create_app(db_path: str, place: str | None = None) -> FastAPI:
         finally:
             db.close()
 
+    @app.get("/api/unknowns")
+    def api_unknowns(place: str | None = None):
+        db = get_db()
+        try:
+            return [_row_to_dict(r) for r in db.list_unknowns(place or app.state.place)]
+        finally:
+            db.close()
+
+    @app.post("/api/unknown/{unknown_id}/label")
+    def api_unknown_label(
+        unknown_id: int,
+        device_class: str = Form(default=""),
+        notes: str = Form(default=""),
+    ):
+        if not is_valid(device_class):
+            raise HTTPException(status_code=400, detail=f"device_class must be one of {class_ids()} or empty")
+        db = get_db()
+        try:
+            if db.get_unknown(unknown_id) is None:
+                raise HTTPException(status_code=404, detail="unknown not found")
+            db.set_unknown_label(unknown_id, device_class=device_class or None, notes=notes or None)
+            return JSONResponse({"ok": True, "id": unknown_id})
+        finally:
+            db.close()
+
+    @app.delete("/api/unknown/{unknown_id}")
+    def api_unknown_discard(unknown_id: int):
+        db = get_db()
+        try:
+            if not db.delete_unknown(unknown_id):
+                raise HTTPException(status_code=404, detail="unknown not found")
+            return JSONResponse({"ok": True, "id": unknown_id})
+        finally:
+            db.close()
+
     @app.post("/api/device/{device_id}/label")
     def api_label(
         device_id: str,

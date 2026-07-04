@@ -28,7 +28,13 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     cfg = Config.load(args.config)
     db = Database(args.db or cfg.db_path)
-    collector = Collector(db, place=cfg.place, capture_unknowns=cfg.capture_unknowns)
+    collector = Collector(
+        db,
+        place=cfg.place,
+        capture_unknowns=cfg.capture_unknowns,
+        iq_dir=cfg.iq_dir,
+        max_iq_gb=cfg.max_iq_gb,
+    )
 
     if args.replay:
         collector.process_stream(replay_file(args.replay), source="replay")

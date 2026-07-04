@@ -164,6 +164,37 @@ class Database:
             " ORDER BY e.id DESC LIMIT ?", (limit,)
         ).fetchall()
 
+    # --- unknowns (review queue, Pi §6) ---
+
+    def list_unknowns(self, place: str | None = None) -> list[sqlite3.Row]:
+        if place:
+            return self.conn.execute(
+                "SELECT * FROM unknowns WHERE place=? ORDER BY id DESC", (place,)
+            ).fetchall()
+        return self.conn.execute("SELECT * FROM unknowns ORDER BY id DESC").fetchall()
+
+    def get_unknown(self, unknown_id: int) -> sqlite3.Row | None:
+        return self.conn.execute("SELECT * FROM unknowns WHERE id=?", (unknown_id,)).fetchone()
+
+    def set_unknown_label(
+        self, unknown_id: int, device_class: str | None = None, notes: str | None = None,
+        label: str | None = None,
+    ) -> None:
+        self.conn.execute(
+            "UPDATE unknowns SET device_class=COALESCE(?, device_class),"
+            " notes=COALESCE(?, notes), label=COALESCE(?, label) WHERE id=?",
+            (device_class, notes, label, unknown_id),
+        )
+        self.conn.commit()
+
+    def delete_unknown(self, unknown_id: int) -> bool:
+        cur = self.conn.execute("DELETE FROM unknowns WHERE id=?", (unknown_id,))
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def unknown_count(self) -> int:
+        return self.conn.execute("SELECT COUNT(*) c FROM unknowns").fetchone()["c"]
+
     def device_event_timestamps(self, device_id: str) -> list[str]:
         rows = self.conn.execute(
             "SELECT ts FROM events WHERE device_id=? ORDER BY ts", (device_id,)
