@@ -17,6 +17,7 @@
 
 #include "census_camp_view.h"
 #include "census_freq.h"
+#include "census_recon.h"
 #include "census_storage.h"
 #include "census_worker.h"
 #include "scenes/subcensus_scene.h"
@@ -52,9 +53,11 @@ typedef struct {
     CensusCampView* camp_view;
 
     CensusWorker* worker;
+    CensusRecon* recon;
     FuriTimer* live_timer;
     uint32_t camp_freq;
     bool live_sweep;
+    bool recon_fresh;
 
     CensusSettings settings;
 

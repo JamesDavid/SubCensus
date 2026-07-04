@@ -62,10 +62,10 @@ bool subcensus_scene_start_on_event(void* context, SceneManagerEvent event) {
             scene_manager_next_scene(app->scene_manager, SubCensusSceneAbout);
             return true;
         case StartItemRunRecon:
-            start_todo(app, "Recon (M4)\nlive RSSI needs\nhardware");
+            scene_manager_next_scene(app->scene_manager, SubCensusSceneReconRun);
             return true;
         case StartItemReconResults:
-            start_todo(app, "Recon results\n(M4)");
+            scene_manager_next_scene(app->scene_manager, SubCensusSceneReconResults);
             return true;
         case StartItemSweep:
             scene_manager_next_scene(app->scene_manager, SubCensusSceneSweep);

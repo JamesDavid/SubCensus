@@ -54,6 +54,7 @@ static SubCensusApp* subcensus_app_alloc(void) {
     census_settings_load(app->storage, &app->settings);
     census_storage_init(app->storage, &app->settings);
     app->worker = census_worker_alloc(app->storage);
+    app->recon = census_recon_alloc(app->storage);
     return app;
 }
 
@@ -73,6 +74,7 @@ static void subcensus_app_free(SubCensusApp* app) {
     dialog_ex_free(app->dialog_ex);
     popup_free(app->popup);
     census_camp_view_free(app->camp_view);
+    census_recon_free(app->recon);
     census_worker_free(app->worker);
 
     scene_manager_free(app->scene_manager);
