@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import csv
 import datetime as _dt
+import json
 from pathlib import Path
 
 # ISM band -> typical devices + typical cadences (reference grounding, System §8).
@@ -135,3 +136,24 @@ def build_bundle(place_dir: str | Path, place_name: str | None = None,
             "protocol_map_slice": (protocol_map or [])[:50],
         },
     }
+
+
+def render_prompt(bundle: dict) -> str:
+    """Paste-able prompt.md (System §8 system-prompt intent: RF/ISM analyst)."""
+    m = bundle["manifest"]
+    return "\n".join([
+        "# SubCensus place analysis",
+        "",
+        "You are an RF/ISM analyst. Separate confident IDs from guesses; justify each from",
+        "freq + modulation + timing + cadence -> device family; flag anomalies neutrally",
+        "(including cadence anomalies); propose concrete next captures. Return structured JSON",
+        "plus a readable summary.",
+        "",
+        f"Place: **{m['place']}** ({m['tool']}). Devices: {m['device_count']}, "
+        f"captures: {m.get('capture_count', 0)}.",
+        "",
+        "## Bundle",
+        "```json",
+        json.dumps(bundle, indent=2, sort_keys=True),
+        "```",
+    ])
