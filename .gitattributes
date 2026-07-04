@@ -1,0 +1,21 @@
+# Normalize line endings. Source builds on the Linux ufbt SDK and host gcc/clang,
+# so keep LF in the repo for code/data; let Git handle the working-copy conversion.
+* text=auto eol=lf
+
+# Explicitly text
+*.c      text eol=lf
+*.h      text eol=lf
+*.py     text eol=lf
+*.yaml   text eol=lf
+*.yml    text eol=lf
+*.md     text eol=lf
+*.csv    text eol=lf
+*.json   text eol=lf
+*.fam    text eol=lf
+
+# Binary fixtures / assets — never touch
+*.sub    binary
+*.cu8    binary
+*.ook    binary
+*.png    binary
+*.ico    binary
