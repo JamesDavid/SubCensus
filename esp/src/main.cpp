@@ -1,12 +1,15 @@
-/* main.cpp — SubCensusEsp firmware (Esp §8). M1 skeleton: WiFi + NTP + async web server
- * (static page + /api/status JSON) + CC1101 init over VSPI + settings (LittleFS) + place model.
+/* main.cpp — SubCensusEsp firmware (Esp §8).
+ * M1: WiFi + NTP + async web + CC1101 VSPI + settings + place.
+ * M2: Camp mode (RMT GDO0 edge capture -> RAW), CC1101 RSSI, census_log.csv + capped/rotating
+ *     capture files + WebSocket live feed, and a fixture-injection debug endpoint so the
+ *     decode -> feature -> log -> WS path is exercised with NO live RF (Esp §3.4).
  *
- * Headless node — the UI is served over WiFi (Esp §5). Capture (RMT/CC1101) lands in M2; live
- * WiFi/NTP/CC1101 behaviour is on-device (TODO(hw)). The hardware-independent logic
- * (esp_settings, esp_place) is unit-tested off-device (esp/test/).
+ * Live radio (RMT capture, CC1101 RSSI/RX) is on-device (TODO(hw)); the processing path it
+ * feeds is shared with the inject endpoint and unit-tested off-device (esp/test/).
  */
 
 #include <Arduino.h>
+#include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include <LittleFS.h>
 #include <SPI.h>
@@ -14,30 +17,38 @@
 #include <time.h>
 
 extern "C" {
+#include "census_schema.h"
+#include "esp_capture.h"
+#include "esp_census_log.h"
 #include "esp_place.h"
+#include "esp_rotation.h"
 #include "esp_settings.h"
 #include "sc_crc.h"
+#include "sc_feature.h"
+#include "sc_sub.h"
 }
 
-// CC1101 on the VSPI hardware bus (Esp §2).
 static constexpr int PIN_SCK = 18, PIN_MISO = 19, PIN_MOSI = 23, PIN_CS = 5;
-static constexpr int PIN_GDO0 = 34; // input-only -> RMT edge capture (M2)
+static constexpr int PIN_GDO0 = 34;
+static constexpr int MAX_CAPTURES = 200; // capped/rotating on LittleFS (Esp §4)
 
-static const char* FS_BASE = ""; // LittleFS mounted at "/" -> paths like /places/<id>/...
+static const char* FS_BASE = "";
 static const char* SETTINGS_PATH = "/settings.txt";
 
 static EspSettings g_settings;
 static AsyncWebServer g_server(80);
+static AsyncWebSocket g_ws("/ws");
 static SPIClass g_vspi(VSPI);
 static bool g_cc1101_present = false;
 static uint8_t g_cc1101_version = 0;
+static volatile bool g_camp_running = false;
 
-// --- CC1101 thin VSPI probe (full RMT capture driver arrives in M2) ---
+// --- CC1101 thin VSPI access (full RMT capture driver is TODO(hw)) ---
 
 static uint8_t cc1101_read_status(uint8_t addr) {
     g_vspi.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
     digitalWrite(PIN_CS, LOW);
-    g_vspi.transfer(addr | 0xC0); // status-register read (burst+read bits)
+    g_vspi.transfer(addr | 0xC0);
     uint8_t v = g_vspi.transfer(0x00);
     digitalWrite(PIN_CS, HIGH);
     g_vspi.endTransaction();
@@ -49,20 +60,45 @@ static bool cc1101_init() {
     digitalWrite(PIN_CS, HIGH);
     pinMode(PIN_GDO0, INPUT);
     g_vspi.begin(PIN_SCK, PIN_MISO, PIN_MOSI, PIN_CS);
-    // strobe SRES (reset)
     g_vspi.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
     digitalWrite(PIN_CS, LOW);
-    g_vspi.transfer(0x30);
+    g_vspi.transfer(0x30); // SRES
     digitalWrite(PIN_CS, HIGH);
     g_vspi.endTransaction();
     delay(1);
-    g_cc1101_version = cc1101_read_status(0x31); // VERSION register
-    // a present CC1101 reports a plausible version (not 0x00 / 0xFF float)
+    g_cc1101_version = cc1101_read_status(0x31);
     g_cc1101_present = (g_cc1101_version != 0x00 && g_cc1101_version != 0xFF);
     return g_cc1101_present;
 }
 
-// --- storage: settings + default place (Esp §4) ---
+// CC1101 RSSI status register (0x34) -> dBm (datasheet conversion). Meaningful only on hw.
+static float cc1101_rssi_dbm() {
+    int raw = cc1101_read_status(0x34);
+    int r = (raw >= 128) ? (raw - 256) : raw;
+    return (float)(r / 2) - 74.0f; // rssi_offset ~74 dB
+}
+
+// --- time ---
+
+static void iso_now(char* out, size_t cap) {
+    time_t now = time(nullptr);
+    struct tm tm;
+    localtime_r(&now, &tm);
+    strftime(out, cap, "%Y-%m-%dT%H:%M:%S", &tm);
+}
+
+// --- storage ---
+
+static void place_file(const char* file, char* out, size_t cap) {
+    esp_place_file(FS_BASE, g_settings.place_id, file, out, cap);
+}
+
+static void append_line(const char* path, const char* line) {
+    File f = LittleFS.open(path, "a");
+    if(!f) return;
+    f.println(line);
+    f.close();
+}
 
 static void load_settings() {
     esp_settings_defaults(&g_settings);
@@ -89,46 +125,178 @@ static void ensure_default_place() {
     LittleFS.mkdir(sig);
     char dir[96];
     esp_place_dir(FS_BASE, g_settings.place_id, dir, sizeof(dir));
-    if(!LittleFS.exists(dir)) {
-        LittleFS.mkdir(dir);
-        // per-place CSVs with the shared-schema headers land with the capture engine (M2)
+    LittleFS.mkdir(dir);
+    char cap[128];
+    place_file("captures", cap, sizeof(cap));
+    LittleFS.mkdir(cap);
+    char log[128];
+    place_file("census_log.csv", log, sizeof(log));
+    if(!LittleFS.exists(log)) append_line(log, CENSUS_LOG_HEADER);
+}
+
+// Rotate oldest capture files so the count stays under MAX_CAPTURES (Esp §4). Names are
+// timestamp-prefixed, so lexical order == chronological.
+static void rotate_captures() {
+    char cdir[128];
+    place_file("captures", cdir, sizeof(cdir));
+    // collect names (bounded)
+    String names[MAX_CAPTURES + 8];
+    int count = 0;
+    File dir = LittleFS.open(cdir);
+    if(!dir) return;
+    for(File e = dir.openNextFile(); e && count < MAX_CAPTURES + 8; e = dir.openNextFile()) {
+        names[count++] = String(e.name());
+        e.close();
+    }
+    dir.close();
+    int evict = esp_rotation_evict_for_count(count, MAX_CAPTURES);
+    for(int i = 0; i < evict; i++) {
+        // find + delete the lexically-smallest (oldest) remaining name
+        int mn = -1;
+        for(int j = 0; j < count; j++) {
+            if(names[j].length() && (mn < 0 || names[j] < names[mn])) mn = j;
+        }
+        if(mn < 0) break;
+        char path[192];
+        snprintf(path, sizeof(path), "%s/%s", cdir, names[mn].c_str());
+        LittleFS.remove(path);
+        names[mn] = "";
     }
 }
 
-// --- networking (Esp §6) — live behaviour is TODO(hw) ---
+// --- the shared processing path: timings -> feature -> .sub + census_log + WS broadcast ---
+
+static ScModulation preset_modulation(uint8_t preset) {
+    return (preset == EspCaptureFsk) ? SC_MOD_2FSK : SC_MOD_OOK;
+}
+
+static const char* preset_name(uint8_t preset) {
+    switch(preset) {
+    case EspCaptureOok650: return "OOK650";
+    case EspCaptureOok270: return "OOK270";
+    case EspCaptureFsk: return "2FSK";
+    default: return "Dual";
+    }
+}
+
+static void process_capture(
+    const int32_t* timings, size_t n, int32_t freq_hz, float rssi, const char* source) {
+    char ts[24];
+    iso_now(ts, sizeof(ts));
+    const char* preset = preset_name(g_settings.capture_preset);
+
+    ScFeatureVector fv;
+    sc_feature_compute(timings, n, freq_hz, preset_modulation(g_settings.capture_preset), &fv);
+
+    // write the .sub (standard Flipper RAW so existing tools work) + rotate
+    char sub_rel[96] = "";
+    if(n > 0) {
+        snprintf(sub_rel, sizeof(sub_rel), "captures/%s_%ld_%s.sub", ts, (long)(freq_hz / 1000), preset);
+        char sub_abs[160];
+        place_file(sub_rel, sub_abs, sizeof(sub_abs));
+        static char subbuf[8192];
+        ScSubMeta meta = {freq_hz, "", "RAW"};
+        snprintf(meta.preset, sizeof(meta.preset), "%s", preset);
+        size_t sublen = 0;
+        if(sc_sub_encode(&meta, timings, n, subbuf, sizeof(subbuf), 512, &sublen) == SC_OK) {
+            File f = LittleFS.open(sub_abs, "w");
+            if(f) {
+                f.write((const uint8_t*)subbuf, sublen);
+                f.close();
+            }
+            rotate_captures();
+        }
+    }
+
+    // census_log row (classification match_* filled in M4)
+    EspCensusRow row = {};
+    row.ts_iso = ts;
+    row.freq_hz = freq_hz;
+    row.rssi_dbm = rssi;
+    row.duration_ms = 0;
+    row.preset = preset;
+    row.sub_file = sub_rel;
+    row.protocol = "";
+    row.key = "";
+    row.match_name = "";
+    row.match_class = "";
+    row.match_source = "";
+    row.label = "";
+    char line[256];
+    if(esp_census_log_row(&row, line, sizeof(line)) > 0) {
+        char log[128];
+        place_file("census_log.csv", log, sizeof(log));
+        append_line(log, line);
+    }
+
+    // WebSocket live feed (Esp §5)
+    char msg[256];
+    snprintf(msg, sizeof(msg),
+             "{\"ts\":\"%s\",\"freq_hz\":%ld,\"rssi\":%.1f,\"preset\":\"%s\","
+             "\"n_symbols\":%ld,\"sub\":\"%s\",\"source\":\"%s\"}",
+             ts, (long)freq_hz, (double)rssi, preset, (long)fv.n_symbols, sub_rel, source);
+    g_ws.textAll(msg);
+    Serial.printf("SC scene=camp action=capture freq=%ld rssi=%.1f source=%s\n",
+                  (long)freq_hz, (double)rssi, source);
+}
+
+// --- Camp mode (Esp §3) — capture pinned to its own core; live RMT/RSSI is TODO(hw) ---
+
+static void camp_task(void* arg) {
+    (void)arg;
+    while(g_camp_running) {
+        // TODO(hw): read CC1101 RSSI; on >= threshold, RMT-capture GDO0 edges into ScRmtItem[],
+        // convert via esp_capture_rmt_to_timings(), then process_capture(). Needs a real radio.
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+    vTaskDelete(nullptr);
+}
+
+static void camp_start() {
+    if(g_camp_running) return;
+    g_camp_running = true;
+    // pin capture to core 0, WiFi/web stays on core 1 (Esp §3 concurrency)
+    xTaskCreatePinnedToCore(camp_task, "camp", 4096, nullptr, 1, nullptr, 0);
+}
+
+static void camp_stop() {
+    g_camp_running = false;
+}
+
+// --- networking ---
 
 static void wifi_start() {
     if(strlen(g_settings.wifi_ssid) == 0) {
-        // TODO(hw): config portal / SoftAP fallback on first boot (Esp §6)
         WiFi.mode(WIFI_AP);
-        WiFi.softAP("SubCensusEsp-setup");
+        WiFi.softAP("SubCensusEsp-setup"); // TODO(hw): config portal (Esp §6)
         return;
     }
     WiFi.mode(WIFI_STA);
     WiFi.begin(g_settings.wifi_ssid, g_settings.wifi_pass);
-    // NTP for real wall-clock timestamps on captures/log (Esp §6)
     configTime(0, 0, "pool.ntp.org", "time.nist.gov");
 }
 
-// --- web (Esp §5) — static status page + /api/status JSON ---
+// --- web ---
 
 static const char INDEX_HTML[] PROGMEM =
     "<!doctype html><meta charset=utf-8><title>SubCensusEsp</title>"
     "<style>body{font-family:system-ui;background:#0f1115;color:#e6e6e6;margin:2rem}"
-    "code{color:#9fd0ff}</style>"
-    "<h1>SubCensusEsp</h1><p>Headless CC1101 census node. Review/label/config here.</p>"
-    "<pre id=s>loading...</pre>"
+    "code{color:#9fd0ff}#feed div{border-bottom:1px solid #232833;padding:2px 0}</style>"
+    "<h1>SubCensusEsp</h1><pre id=s>loading...</pre><h2>Live feed</h2><div id=feed></div>"
     "<script>fetch('/api/status').then(r=>r.json()).then(j=>"
-    "document.getElementById('s').textContent=JSON.stringify(j,null,2))</script>";
+    "document.getElementById('s').textContent=JSON.stringify(j,null,2));"
+    "var ws=new WebSocket('ws://'+location.host+'/ws');ws.onmessage=e=>{var f=document"
+    ".getElementById('feed');var d=document.createElement('div');d.textContent=e.data;"
+    "f.insertBefore(d,f.firstChild)};</script>";
 
 static String status_json() {
-    String ip = WiFi.localIP().toString();
     String s = "{";
     s += "\"node\":\"subcensusesp\",\"version\":\"0.1\",";
     s += "\"place\":\"" + String(g_settings.place_id) + "\",";
     s += "\"mode\":" + String(g_settings.mode) + ",";
+    s += "\"camp_running\":" + String(g_camp_running ? "true" : "false") + ",";
     s += "\"wifi\":{\"connected\":" + String(WiFi.status() == WL_CONNECTED ? "true" : "false") +
-         ",\"ip\":\"" + ip + "\"},";
+         ",\"ip\":\"" + WiFi.localIP().toString() + "\"},";
     s += "\"cc1101\":{\"present\":" + String(g_cc1101_present ? "true" : "false") +
          ",\"version\":" + String(g_cc1101_version) + "},";
     s += "\"tx_enabled\":" + String(g_settings.tx_enabled ? "true" : "false");
@@ -136,13 +304,62 @@ static String status_json() {
     return s;
 }
 
+// POST /api/debug/inject — body is a .sub (RAW timings). Runs the FULL processing path with no
+// live RF (Esp §3.4 fixture injection).
+static void handle_inject(AsyncWebServerRequest* req, uint8_t* data, size_t len) {
+    static char text[8192];
+    size_t n = len < sizeof(text) - 1 ? len : sizeof(text) - 1;
+    memcpy(text, data, n);
+    text[n] = '\0';
+
+    ScSubMeta meta;
+    static int32_t timings[1024];
+    size_t tn = 0;
+    if(sc_sub_parse(text, n, &meta, timings, 1024, &tn) == SC_ERR || tn == 0) {
+        req->send(400, "application/json", "{\"ok\":false,\"error\":\"bad .sub\"}");
+        return;
+    }
+    int32_t freq = meta.frequency ? meta.frequency : 433920000;
+    process_capture(timings, tn, freq, cc1101_rssi_dbm(), "inject");
+    char resp[96];
+    snprintf(resp, sizeof(resp), "{\"ok\":true,\"timings\":%u,\"freq_hz\":%ld}",
+             (unsigned)tn, (long)freq);
+    req->send(200, "application/json", resp);
+}
+
 static void web_start() {
+    g_server.addHandler(&g_ws);
     g_server.on("/", HTTP_GET, [](AsyncWebServerRequest* req) {
         req->send_P(200, "text/html", INDEX_HTML);
     });
     g_server.on("/api/status", HTTP_GET, [](AsyncWebServerRequest* req) {
         req->send(200, "application/json", status_json());
     });
+    g_server.on("/api/captures", HTTP_GET, [](AsyncWebServerRequest* req) {
+        char log[128];
+        place_file("census_log.csv", log, sizeof(log));
+        if(LittleFS.exists(log)) {
+            req->send(LittleFS, log, "text/csv");
+        } else {
+            req->send(200, "text/csv", CENSUS_LOG_HEADER "\n");
+        }
+    });
+    g_server.on("/api/camp", HTTP_POST, [](AsyncWebServerRequest* req) {
+        bool start = req->hasParam("start", true) ? req->getParam("start", true)->value() != "0" : true;
+        if(start)
+            camp_start();
+        else
+            camp_stop();
+        req->send(200, "application/json", start ? "{\"camp\":true}" : "{\"camp\":false}");
+    });
+    g_server.on(
+        "/api/debug/inject", HTTP_POST, [](AsyncWebServerRequest* req) { (void)req; },
+        nullptr,
+        [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+            (void)index;
+            (void)total;
+            handle_inject(req, data, len);
+        });
     g_server.begin();
 }
 
@@ -151,9 +368,7 @@ void setup() {
     delay(200);
     Serial.println("SC boot node=subcensusesp");
 
-    if(!LittleFS.begin(true)) {
-        Serial.println("SC error fs=littlefs_mount_failed");
-    }
+    if(!LittleFS.begin(true)) Serial.println("SC error fs=littlefs_mount_failed");
     load_settings();
     ensure_default_place();
     save_settings();
@@ -164,12 +379,12 @@ void setup() {
     wifi_start();
     web_start();
 
-    // confirm shared/core linked into the firmware
     uint8_t probe[] = {0xDE, 0xAD};
     Serial.printf("SC core_ok crc=%u place=%s\n",
                   sc_crc8(probe, sizeof(probe), 0x07, 0x00), g_settings.place_id);
 }
 
 void loop() {
-    delay(1000);
+    g_ws.cleanupClients();
+    delay(500);
 }
