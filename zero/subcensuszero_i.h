@@ -15,8 +15,10 @@
 #include <notification/notification_messages.h>
 #include <storage/storage.h>
 
+#include "census_camp_view.h"
 #include "census_freq.h"
 #include "census_storage.h"
+#include "census_worker.h"
 #include "scenes/subcensus_scene.h"
 
 typedef enum {
@@ -26,6 +28,7 @@ typedef enum {
     SubCensusViewWidget,
     SubCensusViewDialogEx,
     SubCensusViewPopup,
+    SubCensusViewCamp,
 } SubCensusView;
 
 typedef enum {
@@ -46,6 +49,12 @@ typedef struct {
     Widget* widget;
     DialogEx* dialog_ex;
     Popup* popup;
+    CensusCampView* camp_view;
+
+    CensusWorker* worker;
+    FuriTimer* live_timer;
+    uint32_t camp_freq;
+    bool live_sweep;
 
     CensusSettings settings;
 

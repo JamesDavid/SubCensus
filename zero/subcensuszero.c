@@ -45,11 +45,15 @@ static SubCensusApp* subcensus_app_alloc(void) {
         app->view_dispatcher, SubCensusViewDialogEx, dialog_ex_get_view(app->dialog_ex));
     app->popup = popup_alloc();
     view_dispatcher_add_view(app->view_dispatcher, SubCensusViewPopup, popup_get_view(app->popup));
+    app->camp_view = census_camp_view_alloc();
+    view_dispatcher_add_view(
+        app->view_dispatcher, SubCensusViewCamp, census_camp_view_get_view(app->camp_view));
 
     view_dispatcher_attach_to_gui(app->view_dispatcher, app->gui, ViewDispatcherTypeFullscreen);
 
     census_settings_load(app->storage, &app->settings);
     census_storage_init(app->storage, &app->settings);
+    app->worker = census_worker_alloc(app->storage);
     return app;
 }
 
@@ -60,6 +64,7 @@ static void subcensus_app_free(SubCensusApp* app) {
     view_dispatcher_remove_view(app->view_dispatcher, SubCensusViewWidget);
     view_dispatcher_remove_view(app->view_dispatcher, SubCensusViewDialogEx);
     view_dispatcher_remove_view(app->view_dispatcher, SubCensusViewPopup);
+    view_dispatcher_remove_view(app->view_dispatcher, SubCensusViewCamp);
 
     submenu_free(app->submenu);
     variable_item_list_free(app->var_item_list);
@@ -67,6 +72,8 @@ static void subcensus_app_free(SubCensusApp* app) {
     widget_free(app->widget);
     dialog_ex_free(app->dialog_ex);
     popup_free(app->popup);
+    census_camp_view_free(app->camp_view);
+    census_worker_free(app->worker);
 
     scene_manager_free(app->scene_manager);
     view_dispatcher_free(app->view_dispatcher);

@@ -1,0 +1,62 @@
+#include "../subcensuszero_i.h"
+
+/* Camp live view (Zero §3.2, §6). Starts the capture worker on the chosen frequency; a timer
+ * refreshes the live view (freq · RSSI · hits) and each capture flashes the LED (§4). Back
+ * stops the worker (on_exit). Live RSSI/capture needs a real signal (TODO(hw)). */
+
+#define CAMP_EVENT_CAPTURE 0
+
+static void camp_worker_cb(void* context) {
+    SubCensusApp* app = context;
+    view_dispatcher_send_custom_event(app->view_dispatcher, CAMP_EVENT_CAPTURE);
+}
+
+static void camp_timer_cb(void* context) {
+    SubCensusApp* app = context;
+    CensusHit hits[8];
+    size_t n = census_worker_recent_hits(app->worker, hits, 8);
+    census_camp_view_update(
+        app->camp_view,
+        app->live_sweep,
+        census_worker_current_freq(app->worker),
+        census_worker_rssi(app->worker),
+        census_worker_hits(app->worker),
+        hits,
+        n);
+}
+
+void subcensus_scene_camp_on_enter(void* context) {
+    SubCensusApp* app = context;
+    app->live_sweep = false;
+    census_worker_configure(app->worker, &app->settings, app->settings.place_id);
+    census_worker_set_callback(app->worker, camp_worker_cb, app);
+    census_worker_start_camp(app->worker, app->camp_freq);
+
+    app->live_timer = furi_timer_alloc(camp_timer_cb, FuriTimerTypePeriodic, app);
+    furi_timer_start(app->live_timer, 100);
+    view_dispatcher_switch_to_view(app->view_dispatcher, SubCensusViewCamp);
+}
+
+bool subcensus_scene_camp_on_event(void* context, SceneManagerEvent event) {
+    SubCensusApp* app = context;
+    if(event.type == SceneManagerEventTypeCustom && event.event == CAMP_EVENT_CAPTURE) {
+        if(app->settings.notify != CensusNotifyOff) {
+            notification_message(app->notifications, &sequence_blink_green_10);
+        }
+        if(app->settings.notify == CensusNotifyLedVibro) {
+            notification_message(app->notifications, &sequence_single_vibro);
+        }
+        return true;
+    }
+    return false;
+}
+
+void subcensus_scene_camp_on_exit(void* context) {
+    SubCensusApp* app = context;
+    if(app->live_timer) {
+        furi_timer_stop(app->live_timer);
+        furi_timer_free(app->live_timer);
+        app->live_timer = NULL;
+    }
+    census_worker_stop(app->worker);
+}

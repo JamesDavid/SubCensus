@@ -71,7 +71,7 @@ bool subcensus_scene_start_on_event(void* context, SceneManagerEvent event) {
             start_todo(app, "Sweep (M3)");
             return true;
         case StartItemCamp:
-            start_todo(app, "Camp (M2)\ncapture needs\nhardware");
+            scene_manager_next_scene(app->scene_manager, SubCensusSceneCampPicker);
             return true;
         case StartItemReview:
             start_todo(app, "Review (M8)");
