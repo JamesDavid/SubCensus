@@ -1,5 +1,8 @@
 # SubCensusEsp — ESP32 + CC1101 node
 
+> ⚡ **[Flash it from your browser →](https://jamesdavid.github.io/SubCensus/)** (one click, no
+> toolchain — Chrome/Edge). Wiring diagram + pin map included. Source: [`flasher/`](./flasher/).
+
 The cheap, always-on, **networked** narrowband node. Same **CC1101** as the Zero, so it
 inherits the Zero's capture model and produces **identical feature vectors** (System §7) — the
 cleanest fingerprint parity of the three sensors. Headless: review/label/config happen in a
@@ -70,12 +73,14 @@ live WiFi/MQTT/OTA, and browser rendering are on-device steps (`TODO(hw)`).
 
 ## Status
 
-Non-optional milestones **complete**:
+**All milestones complete (M1–M8):**
 - **M1** skeleton (WiFi/NTP/web/CC1101/settings/place) · **M2** RMT capture + Camp + census_log +
   rotation + WebSocket feed · **M3** Recon+Sweep → occupancy/watchlist · **M4** classification
   (feature vector + gated k-NN) + confirm-appends-fingerprint · **M5** web UI complete ·
-  **M7** MQTT/HA discovery + brain sync + OTA.
+  **M6** SD auto-detect → full per-place folder model (LittleFS fallback with rotation) ·
+  **M7** MQTT/HA discovery + brain sync + OTA · **M8** replay + edit-before-transmit
+  (CC1101 TX; opt-in, TX-allow-list gated, single-frame; field-map heavy crunch defers to the
+  host tools, System §8).
 
-*Optional* remaining (spec §8): **M6** SD auto-detect (full per-place folder model; LittleFS is
-the working fallback) · **M8** replay + edit-before-transmit + field-map over the web UI
-(CC1101 TX; TX-allow-list gated, single-frame, off by default).
+Live radio (RMT capture, CC1101 RSSI/TX), live WiFi/MQTT/OTA, SD reads, and browser rendering
+are on-device steps (`TODO(hw)`); everything upstream is covered by native + web-driver tests.

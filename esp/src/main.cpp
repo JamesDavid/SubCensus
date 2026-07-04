@@ -15,6 +15,7 @@
 #include <HTTPClient.h>
 #include <LittleFS.h>
 #include <PubSubClient.h>
+#include <SD.h>
 #include <SPI.h>
 #include <WiFi.h>
 #include <time.h>
@@ -30,6 +31,8 @@ extern "C" {
 #include "esp_place.h"
 #include "esp_rotation.h"
 #include "esp_settings.h"
+#include "esp_storage.h"
+#include "esp_tx.h"
 #include "sc_crc.h"
 #include "sc_feature.h"
 #include "sc_knn.h"
@@ -39,9 +42,14 @@ extern "C" {
 
 static constexpr int PIN_SCK = 18, PIN_MISO = 19, PIN_MOSI = 23, PIN_CS = 5;
 static constexpr int PIN_GDO0 = 34;
-static constexpr int MAX_CAPTURES = 200; // capped/rotating on LittleFS (Esp §4)
+static constexpr int PIN_SD_CS = 13;                 // optional microSD on VSPI (Esp §2, §4)
+static constexpr int MAX_CAPTURES = 200;             // capped/rotating on LittleFS (Esp §4)
 
-static const char* FS_BASE = "";
+// Data filesystem tier (Esp §4): LittleFS by default, SD if a card is detected at boot.
+// Settings + web assets always live on internal LittleFS; per-place DATA lives on g_dfs.
+static fs::FS* g_dfs = &LittleFS;
+static bool g_sd_present = false;
+static const char* g_base = "";
 static const char* SETTINGS_PATH = "/settings.txt";
 
 static EspSettings g_settings;
@@ -102,11 +110,11 @@ static void iso_now(char* out, size_t cap) {
 // --- storage ---
 
 static void place_file(const char* file, char* out, size_t cap) {
-    esp_place_file(FS_BASE, g_settings.place_id, file, out, cap);
+    esp_place_file(g_base, g_settings.place_id, file, out, cap);
 }
 
 static void append_line(const char* path, const char* line) {
-    File f = LittleFS.open(path, "a");
+    File f = g_dfs->open(path, "a");
     if(!f) return;
     f.println(line);
     f.close();
@@ -136,21 +144,21 @@ static void save_settings() {
 
 static void ensure_default_place() {
     char sig[64];
-    esp_signatures_dir(FS_BASE, sig, sizeof(sig));
-    LittleFS.mkdir("/places");
-    LittleFS.mkdir(sig);
+    esp_signatures_dir(g_base, sig, sizeof(sig));
+    g_dfs->mkdir("/places");
+    g_dfs->mkdir(sig);
     char dir[96];
-    esp_place_dir(FS_BASE, g_settings.place_id, dir, sizeof(dir));
-    LittleFS.mkdir(dir);
+    esp_place_dir(g_base, g_settings.place_id, dir, sizeof(dir));
+    g_dfs->mkdir(dir);
     char cap[128];
     place_file("captures", cap, sizeof(cap));
-    LittleFS.mkdir(cap);
+    g_dfs->mkdir(cap);
     char log[128];
     place_file("census_log.csv", log, sizeof(log));
-    if(!LittleFS.exists(log)) append_line(log, CENSUS_LOG_HEADER);
+    if(!g_dfs->exists(log)) append_line(log, CENSUS_LOG_HEADER);
     char meta[96];
     place_meta_path(g_settings.place_id, meta, sizeof(meta));
-    if(!LittleFS.exists(meta)) place_meta_write(g_settings.place_id, "Home");
+    if(!g_dfs->exists(meta)) place_meta_write(g_settings.place_id, "Home");
 }
 
 static String settings_json() {
@@ -182,7 +190,7 @@ static void place_meta_path(const char* id, char* out, size_t cap) {
 static void place_meta_write(const char* id, const char* name) {
     char p[96];
     place_meta_path(id, p, sizeof(p));
-    File f = LittleFS.open(p, "w");
+    File f = g_dfs->open(p, "w");
     if(f) {
         f.print(name);
         f.close();
@@ -192,8 +200,8 @@ static void place_meta_write(const char* id, const char* name) {
 static String place_name(const char* id) {
     char p[96];
     place_meta_path(id, p, sizeof(p));
-    if(LittleFS.exists(p)) {
-        File f = LittleFS.open(p, "r");
+    if(g_dfs->exists(p)) {
+        File f = g_dfs->open(p, "r");
         String n = f.readStringUntil('\n');
         f.close();
         n.trim();
@@ -204,19 +212,19 @@ static String place_name(const char* id) {
 
 static void place_scaffold(const char* id) {
     char dir[96];
-    esp_place_dir(FS_BASE, id, dir, sizeof(dir));
-    LittleFS.mkdir(dir);
+    esp_place_dir(g_base, id, dir, sizeof(dir));
+    g_dfs->mkdir(dir);
     char cap[128];
-    esp_place_file(FS_BASE, id, "captures", cap, sizeof(cap));
-    LittleFS.mkdir(cap);
+    esp_place_file(g_base, id, "captures", cap, sizeof(cap));
+    g_dfs->mkdir(cap);
     char log[128];
-    esp_place_file(FS_BASE, id, "census_log.csv", log, sizeof(log));
-    if(!LittleFS.exists(log)) append_line(log, CENSUS_LOG_HEADER);
+    esp_place_file(g_base, id, "census_log.csv", log, sizeof(log));
+    if(!g_dfs->exists(log)) append_line(log, CENSUS_LOG_HEADER);
 }
 
 static String places_json() {
     String s = "{\"active\":\"" + String(g_settings.place_id) + "\",\"places\":[";
-    File dir = LittleFS.open("/places");
+    File dir = g_dfs->open("/places");
     bool first = true;
     if(dir) {
         for(File e = dir.openNextFile(); e; e = dir.openNextFile()) {
@@ -240,12 +248,13 @@ static String places_json() {
 // Rotate oldest capture files so the count stays under MAX_CAPTURES (Esp §4). Names are
 // timestamp-prefixed, so lexical order == chronological.
 static void rotate_captures() {
+    if(!esp_storage_rotation_enabled(g_sd_present)) return; // SD: bounded by card size (Esp §4)
     char cdir[128];
     place_file("captures", cdir, sizeof(cdir));
     // collect names (bounded)
     String names[MAX_CAPTURES + 8];
     int count = 0;
-    File dir = LittleFS.open(cdir);
+    File dir = g_dfs->open(cdir);
     if(!dir) return;
     for(File e = dir.openNextFile(); e && count < MAX_CAPTURES + 8; e = dir.openNextFile()) {
         names[count++] = String(e.name());
@@ -262,7 +271,7 @@ static void rotate_captures() {
         if(mn < 0) break;
         char path[192];
         snprintf(path, sizeof(path), "%s/%s", cdir, names[mn].c_str());
-        LittleFS.remove(path);
+        g_dfs->remove(path);
         names[mn] = "";
     }
 }
@@ -277,10 +286,10 @@ static size_t g_fp_count = 0;
 static void load_fingerprints() {
     g_fp_count = 0;
     char sig[64], path[96];
-    esp_signatures_dir(FS_BASE, sig, sizeof(sig));
+    esp_signatures_dir(g_base, sig, sizeof(sig));
     snprintf(path, sizeof(path), "%s/fingerprints.csv", sig);
-    if(!LittleFS.exists(path)) return;
-    File f = LittleFS.open(path, "r");
+    if(!g_dfs->exists(path)) return;
+    File f = g_dfs->open(path, "r");
     if(!f) return;
     bool header = true;
     while(f.available() && g_fp_count < MAX_FPS) {
@@ -353,7 +362,7 @@ static void process_capture(
         snprintf(meta.preset, sizeof(meta.preset), "%s", preset);
         size_t sublen = 0;
         if(sc_sub_encode(&meta, timings, n, subbuf, sizeof(subbuf), 512, &sublen) == SC_OK) {
-            File f = LittleFS.open(sub_abs, "w");
+            File f = g_dfs->open(sub_abs, "w");
             if(f) {
                 f.write((const uint8_t*)subbuf, sublen);
                 f.close();
@@ -411,7 +420,7 @@ static void write_occupancy_and_watchlist(const ScOccupancyBin* bins, size_t n) 
     place_file("occupancy.csv", occ_path, sizeof(occ_path));
     place_file("watchlist.csv", wl_path, sizeof(wl_path));
 
-    File occ = LittleFS.open(occ_path, "w");
+    File occ = g_dfs->open(occ_path, "w");
     if(occ) {
         occ.println(OCCUPANCY_HEADER);
         char row[128], ts[24];
@@ -425,7 +434,7 @@ static void write_occupancy_and_watchlist(const ScOccupancyBin* bins, size_t n) 
     // derive watchlist from occupancy (shared logic, System §9)
     static ScWatchlistEntry wl[64];
     size_t nwl = sc_watchlist_from_occupancy(bins, n, 0.10f, 12.0f, wl, 64);
-    File w = LittleFS.open(wl_path, "w");
+    File w = g_dfs->open(wl_path, "w");
     if(w) {
         w.println(WATCHLIST_HEADER);
         char row[128];
@@ -469,8 +478,8 @@ static void recon_fixture() {
 static size_t load_watchlist_freqs(int32_t* freqs, size_t cap) {
     char wl_path[128];
     place_file("watchlist.csv", wl_path, sizeof(wl_path));
-    if(!LittleFS.exists(wl_path)) return 0;
-    File f = LittleFS.open(wl_path, "r");
+    if(!g_dfs->exists(wl_path)) return 0;
+    File f = g_dfs->open(wl_path, "r");
     if(!f) return 0;
     size_t n = 0;
     bool header = true;
@@ -599,9 +608,9 @@ static bool brain_pull(const char* base_url) {
         http.begin(g_wifi_client, url);
         int code = http.GET();
         if(code == 200) {
-            esp_signatures_dir(FS_BASE, sig, sizeof(sig));
+            esp_signatures_dir(g_base, sig, sizeof(sig));
             snprintf(path, sizeof(path), "%s/%s", sig, fn);
-            File f = LittleFS.open(path, "w");
+            File f = g_dfs->open(path, "w");
             if(f) {
                 http.writeToStream(&f);
                 f.close();
@@ -620,6 +629,47 @@ static bool brain_pull(const char* base_url) {
 static void ota_setup() {
     ArduinoOTA.setHostname("subcensusesp");
     ArduinoOTA.begin(); // TODO(hw): exercised once flashed + on WiFi
+}
+
+// --- replay / edit-before-transmit (Esp §5, System §7b) — the ONLY TX path ---
+// Passive-while-scanning is unchanged; TX is opt-in, explicit, single-frame, allow-list gated.
+// Live CC1101 transmit is TODO(hw). Field-map heavy crunch (differential + CRC search) defers
+// to the host tools (build_signatures.py / the Pi's fieldmap.py); the node does labeling +
+// active confirmation via this TX path.
+
+static bool cc1101_tx_sub(const int32_t* timings, size_t n, int32_t freq, const char* preset) {
+    (void)timings;
+    (void)n;
+    // TODO(hw): tune CC1101 to freq+preset, then furi-style async TX of the RAW timing frame
+    // ONCE (single frame — no auto-increment / sweeping). Needs the radio.
+    Serial.printf("SC action=tx freq=%ld preset=%s frames=1 (TODO hw)\n", (long)freq, preset);
+    return g_cc1101_present; // pretends success only if a radio is actually present
+}
+
+// Parse a .sub (stored capture or an edited frame), guard, and transmit once.
+static void tx_from_sub(AsyncWebServerRequest* req, const String& sub_text, const char* action) {
+    ScSubMeta meta;
+    static int32_t timings[1024];
+    size_t tn = 0;
+    if(sc_sub_parse(sub_text.c_str(), sub_text.length(), &meta, timings, 1024, &tn) == SC_ERR ||
+       tn == 0) {
+        req->send(400, "application/json", "{\"error\":\"bad .sub\"}");
+        return;
+    }
+    int32_t freq = meta.frequency ? meta.frequency : 433920000;
+    if(!esp_tx_allowed(freq, g_settings.tx_enabled)) {
+        req->send(403, "application/json",
+                  "{\"error\":\"TX not allowed\",\"note\":\"enable TX in settings; freq must be "
+                  "in a CC1101 legal segment\"}");
+        return;
+    }
+    bool ok = cc1101_tx_sub(timings, tn, freq, meta.preset[0] ? meta.preset : "OOK650");
+    // Edited/replayed TX is logged DISTINCTLY (Serial), never into census_log — an edited TX is
+    // not a census observation (Esp §5), so the catalog isn't polluted.
+    Serial.printf("SC action=%s freq=%ld frames=1 ok=%d\n", action, (long)freq, ok);
+    char resp[96];
+    snprintf(resp, sizeof(resp), "{\"ok\":%s,\"freq_hz\":%ld}", ok ? "true" : "false", (long)freq);
+    req->send(ok ? 200 : 502, "application/json", resp);
 }
 
 // --- web ---
@@ -755,8 +805,8 @@ static void web_start() {
         } else if(action == "delete" && pid.length()) {
             // never delete the last place or the global signatures/ (System §5.6)
             char dir[96];
-            esp_place_dir(FS_BASE, pid.c_str(), dir, sizeof(dir));
-            LittleFS.rmdir(dir); // best-effort; children removed by the fs layer / TODO(hw) recursive
+            esp_place_dir(g_base, pid.c_str(), dir, sizeof(dir));
+            g_dfs->rmdir(dir); // best-effort; children removed by the fs layer / TODO(hw) recursive
             if(pid == g_settings.place_id) {
                 esp_settings_defaults(&g_settings); // falls back to 'home'
                 ensure_default_place();
@@ -774,8 +824,8 @@ static void web_start() {
     g_server.on("/api/captures", HTTP_GET, [](AsyncWebServerRequest* req) {
         char log[128];
         place_file("census_log.csv", log, sizeof(log));
-        if(LittleFS.exists(log)) {
-            req->send(LittleFS, log, "text/csv");
+        if(g_dfs->exists(log)) {
+            req->send(*g_dfs, log, "text/csv");
         } else {
             req->send(200, "text/csv", CENSUS_LOG_HEADER "\n");
         }
@@ -783,16 +833,16 @@ static void web_start() {
     g_server.on("/api/occupancy", HTTP_GET, [](AsyncWebServerRequest* req) {
         char p[128];
         place_file("occupancy.csv", p, sizeof(p));
-        if(LittleFS.exists(p))
-            req->send(LittleFS, p, "text/csv");
+        if(g_dfs->exists(p))
+            req->send(*g_dfs, p, "text/csv");
         else
             req->send(200, "text/csv", OCCUPANCY_HEADER "\n");
     });
     g_server.on("/api/watchlist", HTTP_GET, [](AsyncWebServerRequest* req) {
         char p[128];
         place_file("watchlist.csv", p, sizeof(p));
-        if(LittleFS.exists(p))
-            req->send(LittleFS, p, "text/csv");
+        if(g_dfs->exists(p))
+            req->send(*g_dfs, p, "text/csv");
         else
             req->send(200, "text/csv", WATCHLIST_HEADER "\n");
     });
@@ -825,6 +875,34 @@ static void web_start() {
             camp_stop();
         req->send(200, "application/json", start ? "{\"camp\":true}" : "{\"camp\":false}");
     });
+    // Replay a stored capture on its own freq/preset (identify-your-own-device). Guarded.
+    // POST /api/replay  sub=<place-relative path>
+    g_server.on("/api/replay", HTTP_POST, [](AsyncWebServerRequest* req) {
+        if(!req->hasParam("sub", true)) {
+            req->send(400, "application/json", "{\"error\":\"sub required\"}");
+            return;
+        }
+        char abs[192];
+        place_file(req->getParam("sub", true)->value().c_str(), abs, sizeof(abs));
+        if(!g_dfs->exists(abs)) {
+            req->send(404, "application/json", "{\"error\":\"capture not found\"}");
+            return;
+        }
+        File f = g_dfs->open(abs, "r");
+        String text = f.readString();
+        f.close();
+        tx_from_sub(req, text, "replay");
+    });
+    // Edit-before-transmit: the body is an edited .sub frame (raw/structured edit done in the
+    // browser; checksum recompute uses the shared CRC family). Guarded, single-frame.
+    g_server.on(
+        "/api/edit_tx", HTTP_POST, [](AsyncWebServerRequest* req) { (void)req; }, nullptr,
+        [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+            (void)index;
+            (void)total;
+            String body((const char*)data, len);
+            tx_from_sub(req, body, "edit_tx");
+        });
     // Review candidates for a capture: recompute its feature vector from the .sub and run
     // k-NN (System §6). GET /api/candidates?sub=<place-relative path>
     g_server.on("/api/candidates", HTTP_GET, [](AsyncWebServerRequest* req) {
@@ -834,11 +912,11 @@ static void web_start() {
         }
         char abs[192];
         place_file(req->getParam("sub")->value().c_str(), abs, sizeof(abs));
-        if(!LittleFS.exists(abs)) {
+        if(!g_dfs->exists(abs)) {
             req->send(404, "application/json", "{\"error\":\"capture not found\"}");
             return;
         }
-        File f = LittleFS.open(abs, "r");
+        File f = g_dfs->open(abs, "r");
         String text = f.readString();
         f.close();
         ScSubMeta meta;
@@ -883,11 +961,11 @@ static void web_start() {
         }
         char abs[192];
         place_file(sub.c_str(), abs, sizeof(abs));
-        if(!LittleFS.exists(abs)) {
+        if(!g_dfs->exists(abs)) {
             req->send(404, "application/json", "{\"error\":\"capture not found\"}");
             return;
         }
-        File f = LittleFS.open(abs, "r");
+        File f = g_dfs->open(abs, "r");
         String text = f.readString();
         f.close();
         ScSubMeta meta;
@@ -902,9 +980,9 @@ static void web_start() {
         char row[192];
         if(esp_fingerprint_row(id, &fv, name.c_str(), cls.c_str(), row, sizeof(row)) > 0) {
             char sig[64], path[96];
-            esp_signatures_dir(FS_BASE, sig, sizeof(sig));
+            esp_signatures_dir(g_base, sig, sizeof(sig));
             snprintf(path, sizeof(path), "%s/fingerprints.csv", sig);
-            if(!LittleFS.exists(path)) append_line(path, FINGERPRINTS_HEADER);
+            if(!g_dfs->exists(path)) append_line(path, FINGERPRINTS_HEADER);
             append_line(path, row);
             load_fingerprints(); // the brain gets smarter with use
         }
@@ -927,6 +1005,13 @@ void setup() {
     Serial.println("SC boot node=subcensusesp");
 
     if(!LittleFS.begin(true)) Serial.println("SC error fs=littlefs_mount_failed");
+
+    // Storage tier (Esp §4): use microSD (full per-place model, no rotation) if present on VSPI,
+    // else internal LittleFS (capped/rotating). Settings + web assets stay on LittleFS.
+    g_sd_present = SD.begin(PIN_SD_CS, g_vspi);
+    g_dfs = g_sd_present ? (fs::FS*)&SD : (fs::FS*)&LittleFS;
+    g_base = esp_storage_base(g_sd_present);
+    Serial.printf("SC storage tier=%s base=%s\n", g_sd_present ? "sd" : "littlefs", g_base);
     load_settings();
     ensure_default_place();
     save_settings();
