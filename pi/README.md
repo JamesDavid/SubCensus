@@ -100,9 +100,11 @@ Everything is **RX-only** — there is no transmit control anywhere in the UI.
   "No unknowns captured" when the corpus is clean, as in the fixture above.)
 - **Bands — occupancy heatmap & watchlist** — the recon surface. The **Recon** buttons run
   **Run (Accumulate)** / **Run (Fresh)** / **Reset (keep pins)** / **Reset (wipe pins)** (System
-  §9, from a recorded `rtl_power` sweep; a live sweep is `TODO(hw)`). Below, the ranked
-  `occupancy.csv` (**Freq · Occupancy · Peak · Noise · Crossings · Last seen**) and the derived
-  `watchlist.csv` with per-entry **pin / exclude**. Needs `places_dir` set in the config.
+  §9, from a recorded `rtl_power` sweep; a live sweep is `TODO(hw)`). A canvas draws the
+  **occupancy heatmap strip** (per-bin busy %) over a **sweep waterfall** (freq × time, newest on
+  top) from the retained `rtl_power` sweeps (`/api/spectrum`). Below, the ranked `occupancy.csv`
+  (**Freq · Occupancy · Peak · Noise · Crossings · Last seen**) and the derived `watchlist.csv`
+  with per-entry **pin / exclude**. Needs `places_dir` set in the config.
 
 **Scripting / headless:** every view has a JSON endpoint — `GET /api/devices`,
 `/api/device/{id}/activity` (sparkline bins), `/api/occupancy`, `/api/watchlist`,
@@ -141,7 +143,7 @@ against the SAME `shared/schema/`. So a Zero place and a Pi place are interchang
 ## Tests (no hardware)
 
 ```
-cd pi && python -m pytest         # 59 tests: DSP parity, collector, dashboard (sparklines,
+cd pi && python -m pytest         # 85 tests: DSP parity, collector, dashboard (sparklines,
                                   # unknowns inspect, Bands), multi-dongle, unknowns, MQTT,
                                   # occupancy pass, shared brain, Places, field-map
 ```
@@ -153,4 +155,4 @@ sweeps need hardware (`TODO(hw)`).
 
 ## Status
 
-**Complete — M0–M9** (all Pi §11 milestones), spec-delta zero. 59 tests green.
+**Complete — M0–M9** (all Pi §11 milestones), spec-delta zero. 85 tests green.

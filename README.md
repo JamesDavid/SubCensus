@@ -99,14 +99,18 @@ Per-target build + test instructions live in each target's README (linked above)
   freq editor, SD-required/full states, and the full M10 edit-before-transmit / field-map
   discovery editor (raw/structured/differential + decode-back gate + propose `field_maps/`). `ufbt`
   build + lint clean; live radio `TODO(hw)`.
-- **SubCensusPi** — **complete (M0–M9)**: collector → SQLite, dashboard (device sparklines,
-  unknowns inspect/IQ, Bands heatmap + pin/exclude + recon controls), multi-dongle, MQTT/HA,
-  occupancy pass, shared brain, Places, field-map discovery. **59 tests green**.
+- **SubCensusPi** — **complete (M0–M9)**: collector → SQLite (MQTT/HA wired in), dashboard
+  (device sparklines, unknowns inspect/IQ, Bands **occupancy heatmap + sweep waterfall** + pin/
+  exclude + recon controls), multi-dongle + rtl_433 relaunch supervision + watchlist attention
+  priority, occupancy pass, shared brain + cadence export, systemd units, Places, field-map
+  discovery. **85 tests green**.
 - **SubCensusEsp** — **complete (M1–M8)**: skeleton, RMT capture + Camp, Recon/Sweep (accumulate/
-  fresh + pin preservation), classification, full web UI incl. **field-map discovery overlay**
-  (differential + segment labeling + checksum re-sign + guarded own-device edit-TX → proposed
-  `field_maps/`), SD auto-detect, MQTT/HA + brain sync + OTA, replay/edit-TX. 11 native + 10
-  web-driver tests; `pio run` clean (79.6% flash). **[Browser web flasher](https://jamesdavid.github.io/SubCensus/)**.
+  fresh + pin preservation), classification with a per-device running **cadence estimator**, full
+  web UI incl. Bands pin/exclude/camp-here, Review top-N candidates + taxonomy picker, **field-map
+  discovery overlay** (differential + segment labeling + checksum re-sign + guarded own-device
+  edit-TX → proposed `field_maps/`), per-identified-device HA discovery, CC1101 preset register
+  tables, SD auto-detect, MQTT/HA + brain sync + OTA, replay/edit-TX. 13 native + 12 web-driver
+  tests; `pio run` clean (80% flash). **[Browser web flasher](https://jamesdavid.github.io/SubCensus/)**.
 - **Shared layer** — `shared/core` now also carries `sc_fieldmap` (field-map + checksum re-sign +
   `.fmap` IO) and `sc_slice` (RAW↔bit-frame), consumed identically by the Zero and Esp editors;
   `build_signatures.py --places` proposes `field_maps/` entries from a place's capture corpus.

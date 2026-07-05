@@ -108,16 +108,19 @@ live WiFi/MQTT/OTA, and browser rendering are on-device steps (`TODO(hw)`).
 ## Status
 
 **All milestones complete (M1–M8), spec-delta zero:**
-- **M1** skeleton (WiFi/NTP/web/CC1101/settings/place) · **M2** RMT capture + Camp + census_log +
-  rotation + WebSocket feed · **M3** Recon+Sweep → occupancy/watchlist (**accumulate/fresh + user
-  pin/exclude preservation**, System §9) · **M4** classification (feature vector + gated k-NN) +
-  confirm-appends-fingerprint · **M5** web UI complete · **M6** SD auto-detect → full per-place
-  folder model (LittleFS fallback with rotation) · **M7** MQTT/HA discovery + brain sync + OTA ·
+- **M1** skeleton (WiFi/NTP/web/CC1101 + preset **register tables**/settings/place) · **M2** RMT
+  capture + Camp (explicit freq / busiest-watchlist auto-pick) + census_log + rotation + WebSocket
+  feed · **M3** Recon+Sweep → occupancy/watchlist (**accumulate/fresh + user pin/exclude
+  preservation**, System §9) + Bands pin/exclude/camp-here · **M4** classification (feature vector
+  + gated k-NN) with a per-device running **cadence estimator** (`esp_catalog`) + confirm-appends-
+  fingerprint + Review top-N candidates & taxonomy picker · **M5** web UI complete · **M6** SD
+  auto-detect → full per-place folder model (LittleFS fallback with rotation) · **M7** MQTT/HA
+  **per-identified-device** discovery + brain sync + OTA ·
   **M8** replay + edit-before-transmit + **in-browser field-map discovery** (CC1101 TX; opt-in,
   TX-allow-list gated, single-frame): passive differential overlay + segment labeling
   (`sc_diff`/`sc_fieldmap`), corpus checksum discovery, confirm-write a `field_maps/*.fmap` entry,
   checksum re-sign, and guarded own-device active confirmation via `/api/fieldmap/tx`.
 
-Tested with **11 native (`zig cc`) + 10 web-driver** tests; `pio run` compiles clean (79.6%
+Tested with **13 native (`zig cc`) + 12 web-driver** tests; `pio run` compiles clean (80%
 flash). Live radio (RMT capture, CC1101 RSSI/TX), live WiFi/MQTT/OTA, and SD reads are on-device
 steps (`TODO(hw)`); everything upstream is covered by the native + web-driver tests.

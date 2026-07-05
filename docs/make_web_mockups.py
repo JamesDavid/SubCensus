@@ -91,8 +91,25 @@ def esp_tabs(c, active):
 
 # --- Pi dashboard ---
 
+def _waterfall(c, x, y, w, rows, cols):
+    """A mock occupancy heatmap strip (top) + sweep waterfall (below), blue->red by 'power'."""
+    import math
+    cw = w / cols
+    # heatmap strip
+    for i in range(cols):
+        t = 0.15 + 0.8 * (math.sin(i * 0.5) ** 2) * (0.4 + 0.6 * ((i * 31) % 7) / 7)
+        c.el.append(f'<rect x="{x+i*cw:.1f}" y="{y}" width="{cw+0.6:.1f}" height="14" '
+                    f'fill="hsl({(1-t)*240:.0f},85%,{28+t*30:.0f}%)"/>')
+    # waterfall rows
+    for r in range(rows):
+        for i in range(cols):
+            t = 0.1 + 0.85 * (math.sin(i * 0.5 + r * 0.3) ** 2) * (0.3 + 0.7 * ((i * 17 + r * 5) % 9) / 9)
+            c.el.append(f'<rect x="{x+i*cw:.1f}" y="{y+18+r*6}" width="{cw+0.6:.1f}" height="6.4" '
+                        f'fill="hsl({(1-t)*240:.0f},85%,{26+t*30:.0f}%)"/>')
+
+
 def pi_dashboard():
-    c = C(940, 600)
+    c = C(940, 660)
     c.t(20, 30, "SubCensusPi", 20, TXT, "700")
     c.t(150, 30, "place: all", 13, MUTED)
     c.t(20, 50, "Wideband RTL-SDR ISM census — RX only. 4 devices.", 12, MUTED)
@@ -142,17 +159,18 @@ def pi_dashboard():
         c.t(x, 444, lbl, 11, MUTED, "600")
     c.t(34, 462, "No unknowns captured.", 12, MUTED)
 
-    # Bands
-    panel(c, 20, 482, 900, 100, "Bands", "occupancy heatmap & watchlist")
+    # Bands (recon controls + occupancy heatmap strip over a sweep waterfall)
+    panel(c, 20, 482, 900, 160, "Bands", "occupancy heatmap & sweep waterfall")
     c.t(34, 524, "Recon:", 12, MUTED)
     x = 84
     x += c.btn(x, 514, "Run (Accumulate)") + 8
     x += c.btn(x, 514, "Run (Fresh)") + 8
     x += c.btn(x, 514, "Reset (keep pins)", warn=True) + 8
     c.btn(x, 514, "Reset (wipe pins)", warn=True)
-    for lbl, xx in zip(["Freq", "Occupancy", "Peak", "Noise", "Crossings", "Last seen"], [34, 150, 320, 430, 560, 720]):
-        c.t(xx, 556, lbl, 11, MUTED, "600")
-    c.t(34, 574, "No places_dir configured.", 12, MUTED)
+    _waterfall(c, 34, 540, 872, 12, 120)
+    c.t(34, 636, "300 MHz", 10, MUTED)
+    c.t(470, 636, "occupancy heatmap (top) · waterfall dBm cold→hot", 10, MUTED, anchor="middle")
+    c.t(906, 636, "930 MHz", 10, MUTED, anchor="end")
     c.save("pi/docs/screens/dashboard.svg")
 
 
