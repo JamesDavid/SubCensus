@@ -21,6 +21,7 @@ from pathlib import Path as _Path
 from ..db import Database
 from ..occupancy_pass import (
     read_occupancy_csv,
+    read_spectrum_csv,
     read_watchlist_rows,
     reset_place,
     run_pass_to_place,
@@ -118,6 +119,12 @@ def create_app(db_path: str, place: str | None = None, places_dir: str | None = 
             ]
             occupancy.sort(key=lambda r: r["occupancy"], reverse=True)
         watchlist = read_watchlist_rows(d / "watchlist.csv") if d is not None else []
+        # Waterfall: the rolling window of downsampled rtl_power sweeps (freq x time, §7 tier 2).
+        spectrum = {"freqs": [], "sweeps": []}
+        if d is not None:
+            bfreqs, rows = read_spectrum_csv(d / "spectrum.csv")
+            spectrum = {"freqs": bfreqs,
+                        "sweeps": [{"ts": ts, "dbm": dbm} for ts, dbm in rows]}
         return TEMPLATES.TemplateResponse(
             request=request,
             name="index.html",
@@ -128,6 +135,7 @@ def create_app(db_path: str, place: str | None = None, places_dir: str | None = 
                 "sparklines": sparklines,
                 "occupancy": occupancy,
                 "watchlist": watchlist,
+                "spectrum_json": json.dumps(spectrum),
                 "classes": class_ids(),
                 "place": p,
                 "has_bands": d is not None,
@@ -207,6 +215,17 @@ def create_app(db_path: str, place: str | None = None, places_dir: str | None = 
     def api_watchlist(place: str | None = None):
         d = place_dir(place)
         return read_watchlist_rows(d / "watchlist.csv") if d else []
+
+    @app.get("/api/spectrum")
+    def api_spectrum(place: str | None = None):
+        """Waterfall data (Pi §7): the rolling window of downsampled rtl_power sweeps — a
+        freq-bucket grid + the most recent sweeps' dBm rows (oldest first). Drives the occupancy
+        heatmap + sweep waterfall in the Bands view. Empty until a recon pass has run."""
+        d = place_dir(place)
+        if d is None:
+            return {"freqs": [], "sweeps": []}
+        bfreqs, rows = read_spectrum_csv(d / "spectrum.csv")
+        return {"freqs": bfreqs, "sweeps": [{"ts": ts, "dbm": dbm} for ts, dbm in rows]}
 
     @app.post("/api/watchlist/pin")
     def api_pin(freq_hz: int = Form(...), action: str = Form(...), place: str = Form(default="")):

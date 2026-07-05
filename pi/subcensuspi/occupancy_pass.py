@@ -26,6 +26,12 @@ WATCHLIST_HEADER = ["freq_hz", "modulation", "threshold_dbm", "occupancy", "sour
 DEFAULT_MARGIN_DB = 12.0
 DEFAULT_OCC_CUTOFF = 0.10
 
+# Sweep-history (waterfall, Pi §7 tier 2): downsample each sweep to a fixed freq-bucket grid and
+# keep a rolling window of the most recent sweeps so the dashboard can stack them over time.
+SPECTRUM_BUCKETS = 120
+SPECTRUM_MAX_SWEEPS = 60
+SPECTRUM_FLOOR_DBM = -120.0
+
 
 @dataclass
 class OccBin:
@@ -109,6 +115,90 @@ def run_occupancy_pass(samples, margin_db: float = DEFAULT_MARGIN_DB) -> list[Oc
         bins.append(OccBin(freq_hz, floor, peak, above / len(samps), crossings, last_seen))
     bins.sort(key=lambda b: b.freq_hz)
     return bins
+
+
+# --- sweep history for the waterfall (Pi §7 tier 2) ---
+
+def sweeps_from_samples(samples):
+    """Group flat (freq, dbm, ts, band) samples into per-timestamp sweeps (in first-seen order).
+    Returns (ordered_ts, {ts: {freq: dbm}}, fmin, fmax)."""
+    by_ts: dict[str, dict[int, float]] = {}
+    order: list[str] = []
+    fmin = fmax = None
+    for freq_hz, dbm, ts, _band in samples:
+        s = by_ts.get(ts)
+        if s is None:
+            s = by_ts[ts] = {}
+            order.append(ts)
+        # keep the strongest reading if a bin repeats within a sweep
+        if freq_hz not in s or dbm > s[freq_hz]:
+            s[freq_hz] = dbm
+        fmin = freq_hz if fmin is None else min(fmin, freq_hz)
+        fmax = freq_hz if fmax is None else max(fmax, freq_hz)
+    return order, by_ts, fmin, fmax
+
+
+def _bucket_freqs(fmin: int, fmax: int, n: int = SPECTRUM_BUCKETS) -> list[int]:
+    if fmax <= fmin:
+        return [fmin] * n
+    step = (fmax - fmin) / n
+    return [int(fmin + step * (i + 0.5)) for i in range(n)]
+
+
+def bucket_sweep(freqmap: dict[int, float], bucket_freqs: list[int]) -> list[float]:
+    """Peak-hold each sweep's readings into the bucket grid (dBm; SPECTRUM_FLOOR where empty)."""
+    n = len(bucket_freqs)
+    if n < 2:
+        return [SPECTRUM_FLOOR_DBM] * n
+    lo, hi = bucket_freqs[0], bucket_freqs[-1]
+    span = hi - lo if hi > lo else 1
+    out = [SPECTRUM_FLOOR_DBM] * n
+    for f, dbm in freqmap.items():
+        b = int((f - lo) / span * (n - 1) + 0.5)
+        b = 0 if b < 0 else (n - 1 if b >= n else b)
+        if dbm > out[b]:
+            out[b] = dbm
+    return out
+
+
+def build_spectrum(samples, bucket_freqs: list[int] | None = None):
+    """Downsample each sweep to the bucket grid. Returns (bucket_freqs, [(ts, [dbm,...]), ...])."""
+    order, by_ts, fmin, fmax = sweeps_from_samples(samples)
+    if not order:
+        return (bucket_freqs or []), []
+    if bucket_freqs is None:
+        bucket_freqs = _bucket_freqs(fmin, fmax)
+    rows = [(ts, bucket_sweep(by_ts[ts], bucket_freqs)) for ts in order]
+    return bucket_freqs, rows
+
+
+def read_spectrum_csv(path: str | Path):
+    """Return (bucket_freqs, [(ts, [dbm,...]), ...]) or ([], []) if absent."""
+    p = Path(path)
+    if not p.exists():
+        return [], []
+    with p.open("r", newline="", encoding="utf-8") as fh:
+        r = csv.reader(fh)
+        header = next(r, None)
+        if not header or len(header) < 2:
+            return [], []
+        bucket_freqs = [int(x) for x in header[1:]]
+        rows = []
+        for row in r:
+            if len(row) < 2:
+                continue
+            rows.append((row[0], [float(x) for x in row[1:]]))
+    return bucket_freqs, rows
+
+
+def write_spectrum_csv(bucket_freqs, rows, path: str | Path,
+                       max_sweeps: int = SPECTRUM_MAX_SWEEPS) -> None:
+    rows = rows[-max_sweeps:]
+    with Path(path).open("w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["ts", *bucket_freqs])
+        for ts, dbms in rows:
+            w.writerow([ts, *[round(d, 1) for d in dbms]])
 
 
 # --- CSV IO (shared schema) ---
@@ -199,8 +289,10 @@ def run_pass_to_place(
     place.mkdir(parents=True, exist_ok=True)
     occ_path = place / "occupancy.csv"
     wl_path = place / "watchlist.csv"
+    spec_path = place / "spectrum.csv"
 
-    new_bins = run_occupancy_pass(parse_rtl_power_csv(rtl_power_csv), margin_db)
+    samples = list(parse_rtl_power_csv(rtl_power_csv))  # materialize: reused for occupancy + waterfall
+    new_bins = run_occupancy_pass(samples, margin_db)
     if fresh:
         bins = new_bins
     else:
@@ -209,6 +301,12 @@ def run_pass_to_place(
     pins = read_watchlist_pins(wl_path)  # preserve user pins across re-run
     write_occupancy_csv(bins, occ_path)
     write_watchlist_csv(bins, wl_path, occ_cutoff=occ_cutoff, margin_db=margin_db, pins=pins)
+
+    # sweep-history waterfall (§7 tier 2): append this pass's sweeps to the rolling window,
+    # aligning to the existing bucket grid on accumulate so old + new rows stack coherently.
+    prev_freqs, prev_rows = ([], []) if fresh else read_spectrum_csv(spec_path)
+    bucket_freqs, new_rows = build_spectrum(samples, prev_freqs or None)
+    write_spectrum_csv(bucket_freqs, prev_rows + new_rows, spec_path)
     return bins
 
 
@@ -237,7 +335,9 @@ def reset_place(place_dir: str | Path, keep_pins: bool = True) -> None:
     place = Path(place_dir)
     occ_path = place / "occupancy.csv"
     wl_path = place / "watchlist.csv"
+    spec_path = place / "spectrum.csv"
     pins = read_watchlist_pins(wl_path) if keep_pins else []
 
     write_occupancy_csv([], occ_path)
     write_watchlist_csv([], wl_path, pins=pins)
+    spec_path.unlink(missing_ok=True)  # clear the waterfall history too (recon artifact, §9)

@@ -118,3 +118,70 @@ def test_recon_run_from_recorded_sweep(sweep, tmp_path):
 
     # bad mode rejected
     assert client.post("/api/recon/run", data={"place": "home", "mode": "nope", "rtl_power_csv": str(sweep)}).status_code == 400
+
+
+# --- occupancy heatmap (tier 1) + sweep waterfall (tier 2), Pi §7 ---
+
+def test_bucket_sweep_peak_hold():
+    freqs = op._bucket_freqs(300_000_000, 900_000_000, 6)
+    assert len(freqs) == 6
+    row = op.bucket_sweep({305_000_000: -50.0, 895_000_000: -40.0}, freqs)
+    assert row[0] == -50.0            # low reading lands in bucket 0
+    assert row[-1] == -40.0           # high reading in the last bucket
+    assert row[3] == op.SPECTRUM_FLOOR_DBM  # empty bucket carries the floor
+
+
+def test_build_spectrum_groups_sweeps(sweep):
+    samples = list(op.parse_rtl_power_csv(sweep))
+    freqs, rows = op.build_spectrum(samples)
+    assert len(freqs) == op.SPECTRUM_BUCKETS
+    assert len(rows) == 4                      # 4 distinct sweep timestamps in the fixture
+    assert all(len(dbm) == op.SPECTRUM_BUCKETS for _ts, dbm in rows)
+    # the 433.97 hot bin should read hotter than the noise floor in every sweep
+    lo, hi = freqs[0], freqs[-1]
+    idx = round((433_970_000 - lo) / (hi - lo) * (op.SPECTRUM_BUCKETS - 1))
+    assert all(dbm[idx] > -90 for _ts, dbm in rows)
+
+
+def test_spectrum_written_and_api(sweep, tmp_path):
+    places_dir = tmp_path / "places"
+    op.run_pass_to_place(sweep, places_dir / "home")
+    freqs, rows = op.read_spectrum_csv(places_dir / "home" / "spectrum.csv")
+    assert len(freqs) == op.SPECTRUM_BUCKETS and len(rows) == 4
+
+    client = TestClient(create_app(str(tmp_path / "census.db"), place="home", places_dir=str(places_dir)))
+    spec = client.get("/api/spectrum").json()
+    assert len(spec["freqs"]) == op.SPECTRUM_BUCKETS
+    assert len(spec["sweeps"]) == 4
+    assert len(spec["sweeps"][0]["dbm"]) == op.SPECTRUM_BUCKETS
+
+
+def test_spectrum_accumulates_and_fresh_clears(sweep, tmp_path):
+    place = tmp_path / "home"
+    op.run_pass_to_place(sweep, place)
+    _f1, r1 = op.read_spectrum_csv(place / "spectrum.csv")
+    op.run_pass_to_place(sweep, place)                     # accumulate: sweeps appended
+    _f2, r2 = op.read_spectrum_csv(place / "spectrum.csv")
+    assert len(r2) == 2 * len(r1)
+    assert len(r2) <= op.SPECTRUM_MAX_SWEEPS
+    op.run_pass_to_place(sweep, place, fresh=True)         # fresh: history cleared to this pass
+    _f3, r3 = op.read_spectrum_csv(place / "spectrum.csv")
+    assert len(r3) == len(r1)
+
+
+def test_reset_clears_spectrum(sweep, tmp_path):
+    place = tmp_path / "home"
+    op.run_pass_to_place(sweep, place)
+    assert (place / "spectrum.csv").exists()
+    op.reset_place(place, keep_pins=True)
+    assert not (place / "spectrum.csv").exists()
+
+
+def test_waterfall_renders_in_dashboard(sweep, tmp_path):
+    places_dir = tmp_path / "places"
+    op.run_pass_to_place(sweep, places_dir / "home")
+    client = TestClient(create_app(str(tmp_path / "census.db"), place="home", places_dir=str(places_dir)))
+    html = client.get("/").text
+    assert 'id="waterfall"' in html          # heatmap+waterfall canvas present
+    assert "drawWaterfall" in html
+    assert "occupancy heatmap" in html.lower()

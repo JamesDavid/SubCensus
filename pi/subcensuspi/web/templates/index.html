@@ -114,6 +114,16 @@
         <button class="danger" id="reset-wipe">Reset (wipe pins)</button>
         <span class="muted" id="recon-out"></span>
       </div>
+      <!-- occupancy heatmap strip (tier 1) + sweep waterfall (tier 2), from the rtl_power pass (§7). -->
+      <div id="waterfall-wrap" style="margin:6px 0 12px;{% if not has_bands %}display:none{% endif %}">
+        <canvas id="waterfall" width="960" height="220"
+                style="width:100%;height:auto;background:#0b0d12;border:1px solid #2a2f3a;border-radius:6px;image-rendering:pixelated"></canvas>
+        <div class="muted" id="wf-axis" style="display:flex;justify-content:space-between;font-size:11px;margin-top:2px"></div>
+        <div class="muted" style="font-size:11px;margin-top:2px">
+          Top strip = occupancy heatmap (per-bin busy %); below = sweep waterfall (newest sweep on top).
+          <span id="wf-legend"></span>
+        </div>
+      </div>
       <table id="occupancy">
         <thead><tr><th>Freq</th><th>Occupancy</th><th>Peak</th><th>Noise</th><th>Crossings</th><th>Last seen</th><th></th></tr></thead>
         <tbody>
@@ -232,6 +242,62 @@
     var rw = document.getElementById('reset-wipe');
     if (rw) rw.addEventListener('click', function () {
       if (confirm('Reset recon and WIPE pins?')) recon(null, '/api/recon/reset', { keep_pins: 'false' }); });
+
+    // --- bands: occupancy heatmap (tier 1) + sweep waterfall (tier 2) ---
+    const SPECTRUM = {{ spectrum_json|safe }};
+    const OCCUPANCY = {{ occupancy|tojson }};
+    function cmap(t) {  // blue (cold/quiet) -> red (hot/busy)
+      t = Math.max(0, Math.min(1, t));
+      return 'hsl(' + ((1 - t) * 240) + ',85%,' + (28 + t * 30) + '%)';
+    }
+    function drawWaterfall() {
+      const cv = document.getElementById('waterfall');
+      if (!cv) return;
+      const ctx = cv.getContext('2d');
+      const W = cv.width, H = cv.height;
+      ctx.clearRect(0, 0, W, H);
+      const freqs = (SPECTRUM && SPECTRUM.freqs) || [];
+      const sweeps = (SPECTRUM && SPECTRUM.sweeps) || [];
+      const stripH = 18, gap = 4, wfTop = stripH + gap, wfH = H - wfTop;
+      if (freqs.length < 2) {
+        ctx.fillStyle = '#8b93a1'; ctx.font = '12px system-ui';
+        ctx.fillText('No sweep data yet — Run an occupancy pass (Recon) above.', 10, H / 2);
+        return;
+      }
+      const nb = freqs.length, cellW = W / nb;
+      const fmin = freqs[0], fmax = freqs[nb - 1], span = (fmax - fmin) || 1;
+      // occupancy strip: map occupancy bins onto the freq-bucket grid (peak-hold)
+      const occ = new Array(nb).fill(null);
+      OCCUPANCY.forEach(function (b) {
+        const i = Math.round((b.freq_hz - fmin) / span * (nb - 1));
+        if (i >= 0 && i < nb) occ[i] = Math.max(occ[i] || 0, b.occupancy);
+      });
+      for (let i = 0; i < nb; i++) {
+        ctx.fillStyle = (occ[i] == null) ? '#12151c' : cmap(occ[i]);
+        ctx.fillRect(i * cellW, 0, Math.ceil(cellW), stripH);
+      }
+      // waterfall: newest sweep at the top, colored by dBm
+      let dmin = Infinity, dmax = -Infinity;
+      sweeps.forEach(function (s) { s.dbm.forEach(function (d) {
+        if (d > -119) { if (d < dmin) dmin = d; if (d > dmax) dmax = d; } }); });
+      if (!isFinite(dmin)) { dmin = -110; dmax = -40; }
+      if (dmax - dmin < 1) dmax = dmin + 1;
+      const rows = sweeps.slice().reverse();
+      const rowH = Math.max(1, wfH / Math.max(rows.length, 1));
+      rows.forEach(function (s, r) {
+        for (let i = 0; i < nb; i++) {
+          ctx.fillStyle = cmap((s.dbm[i] - dmin) / (dmax - dmin));
+          ctx.fillRect(i * cellW, wfTop + r * rowH, Math.ceil(cellW), Math.ceil(rowH));
+        }
+      });
+      document.getElementById('wf-axis').innerHTML =
+        '<span>' + (fmin / 1e6).toFixed(1) + ' MHz</span>' +
+        '<span>' + ((fmin + fmax) / 2e6).toFixed(1) + '</span>' +
+        '<span>' + (fmax / 1e6).toFixed(1) + ' MHz</span>';
+      document.getElementById('wf-legend').textContent =
+        ' Waterfall dBm ' + dmin.toFixed(0) + ' (cold) → ' + dmax.toFixed(0) + ' (hot).';
+    }
+    drawWaterfall();
 
     // --- live feed ---
     function renderFeed(events) {
