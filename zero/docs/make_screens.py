@@ -267,9 +267,10 @@ def build_all():
     # About (text scroll)
     c = Canvas()
     for i, ln in enumerate([
-            "SubCensusZero v0.1", "SDK: release 1.4.3", "API: 87.1 (f7)",
-            "PASSIVE census: Sweep/Camp/", "Recon never transmit.",
-            "Storage: /ext SD 7100/7600 MB", "Battery ~5-8 h Camp/Sweep"]):
+            "SubCensusZero v0.1   API 87.1", "Monitoring is passive:",
+            "Sweep/Camp/Recon never TX.", "Replay & Edit-TX DO transmit",
+            "(explicit, TX-allow-list).", "Storage: /ext SD 7100/7600 MB",
+            "Battery ~5-8 h Camp/Sweep"]):
         c.text(2, 9 + i * 8, ln, size=7)
     render("23_about", "About", c)
 
