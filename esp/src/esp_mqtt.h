@@ -8,6 +8,14 @@
 #define ESP_MQTT_H
 
 #include <stddef.h>
+#include <stdint.h>
+
+/* Build a STABLE per-identified-device id from its class + frequency, e.g. "weather_433920"
+ * (freq in kHz). Non-alphanumeric chars in the class (e.g. the '/' in "water/gas-meter") are
+ * folded to '_' so the id is topic/unique_id safe. On a confident classification the node
+ * publishes a discovery config under this id so each identified device surfaces as its own HA
+ * entity (Esp §6), not just the one node-level rssi sensor. Returns bytes written or -1. */
+int esp_mqtt_device_id(const char* device_class, int32_t freq_hz, char* out, size_t cap);
 
 /* homeassistant/sensor/<base>/<device_id>_<entity>/config */
 int esp_mqtt_discovery_topic(

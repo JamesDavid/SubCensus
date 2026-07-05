@@ -342,6 +342,77 @@ size_t census_watchlist_freqs(Storage* storage, const char* place_id, uint32_t* 
     return n;
 }
 
+/* Parse a watchlist line "freq,mod,threshold,occ,source" -> freq, threshold, source. */
+static void
+    watchlist_row_parse(const char* line, uint32_t* freq, float* thr, char* src, size_t scap) {
+    char* p = (char*)line;
+    *freq = (uint32_t)strtoul(p, &p, 10);
+    if(*p == ',') p++;
+    while(*p && *p != ',') /* skip modulation (col 1) */
+        p++;
+    if(*p == ',') p++;
+    *thr = strtof(p, &p); /* threshold_dbm (col 2) */
+    watchlist_row_source(line, src, scap);
+}
+
+size_t census_watchlist_load(
+    Storage* storage,
+    const char* place_id,
+    uint32_t* out_freqs,
+    float* out_thr,
+    size_t cap) {
+    char path[160];
+    census_place_file(place_id, "watchlist.csv", path, sizeof(path));
+    File* f = storage_file_alloc(storage);
+    size_t n = 0;
+    if(storage_file_open(f, path, FSAM_READ, FSOM_OPEN_EXISTING)) {
+        char line[128];
+        size_t li = 0;
+        bool header = true;
+        char c;
+        while(n < cap && storage_file_read(f, &c, 1) == 1) {
+            if(c == '\n' || li >= sizeof(line) - 1) {
+                line[li] = '\0';
+                if(!header && li > 0) {
+                    uint32_t freq;
+                    float thr;
+                    char src[16];
+                    watchlist_row_parse(line, &freq, &thr, src, sizeof(src));
+                    if(strcmp(src, "user-exclude") != 0) {
+                        out_freqs[n] = freq;
+                        if(out_thr) out_thr[n] = thr;
+                        n++;
+                    }
+                }
+                header = false;
+                li = 0;
+            } else if(c != '\r') {
+                line[li++] = c;
+            }
+        }
+    }
+    storage_file_close(f);
+    storage_file_free(f);
+    return n;
+}
+
+bool census_watchlist_threshold(
+    Storage* storage,
+    const char* place_id,
+    uint32_t freq,
+    float* out_thr) {
+    uint32_t freqs[64];
+    float thr[64];
+    size_t n = census_watchlist_load(storage, place_id, freqs, thr, 64);
+    for(size_t i = 0; i < n; i++) {
+        if(freqs[i] == freq) {
+            if(out_thr) *out_thr = thr[i];
+            return true;
+        }
+    }
+    return false;
+}
+
 bool census_watchlist_set_source(
     Storage* storage,
     const char* place_id,

@@ -36,6 +36,7 @@ class WebConfig:
 class Config:
     dongles: list[DongleConfig] = field(default_factory=lambda: [DongleConfig()])
     capture_unknowns: bool = False
+    prioritize_watchlist: bool = False  # opt-in: reorder hop/dongle attention by watchlist (§3)
     place: str = "home"
     places_dir: str = "/var/lib/subcensuspi/places"
     signatures_dir: str = "/var/lib/subcensuspi/signatures"
@@ -44,6 +45,15 @@ class Config:
     db_path: str = "/var/lib/subcensuspi/census.db"
     mqtt: MqttConfig = field(default_factory=MqttConfig)
     web: WebConfig = field(default_factory=WebConfig)
+
+    def place_iq_dir(self, place: str | None = None) -> str:
+        """Per-place captured-IQ directory (§9a): ``places_dir/<place>/iq``.
+
+        §9a scopes captured IQ under the place, not the flat top-level ``iq_dir``. The legacy
+        ``iq_dir`` field is retained for back-compat/overrides, but the collector derives its
+        capture + disk-guard directory from here so IQ is place-scoped like occupancy/watchlist.
+        """
+        return str(Path(self.places_dir) / (place or self.place) / "iq")
 
     @classmethod
     def load(cls, path: str | Path) -> "Config":
@@ -67,6 +77,7 @@ class Config:
         return cls(
             dongles=dongles,
             capture_unknowns=bool(data.get("capture_unknowns", False)),
+            prioritize_watchlist=bool(data.get("prioritize_watchlist", False)),
             place=str(data.get("place", "home")),
             places_dir=str(data.get("places_dir", "/var/lib/subcensuspi/places")),
             signatures_dir=str(data.get("signatures_dir", "/var/lib/subcensuspi/signatures")),

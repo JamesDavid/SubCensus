@@ -18,11 +18,22 @@ static void sweep_jump_cb(void* context, uint32_t freq_hz) {
     scene_manager_next_scene(app->scene_manager, SubCensusSceneReview);
 }
 
+static uint32_t g_sweep_last_hits;
+
 static void sweep_timer_cb(void* context) {
     SubCensusApp* app = context;
     CensusHit hits[8];
     size_t n = census_worker_recent_hits(app->worker, hits, 8);
+    uint32_t h = census_worker_hits(app->worker);
+    bool rec = (h != g_sweep_last_hits); /* "REC" flash on a fresh capture (§6) */
+    g_sweep_last_hits = h;
     census_camp_view_set_low(app->camp_view, census_sd_low(app->storage));
+    census_camp_view_set_status(
+        app->camp_view,
+        census_worker_elapsed_s(app->worker),
+        rec,
+        census_worker_sweep_pos(app->worker),
+        census_worker_sweep_count(app->worker));
     census_camp_view_update(
         app->camp_view,
         app->live_sweep,
@@ -36,9 +47,10 @@ static void sweep_timer_cb(void* context) {
 /* Start the sweep worker on the active watchlist (if present) or the preset/custom fallback. */
 static void sweep_begin(SubCensusApp* app) {
     uint32_t freqs[16];
+    float thr[16];
     size_t n = 0;
     if(app->settings.use_watchlist) {
-        n = census_watchlist_freqs(app->storage, app->settings.place_id, freqs, 16);
+        n = census_watchlist_load(app->storage, app->settings.place_id, freqs, thr, 16);
     }
     if(n == 0) { /* no valid recon -> fall back to the preset/custom list, never blocked (§9) */
         if(app->settings.freq_preset == CensusFreqPresetCustom && app->settings.custom_count > 0) {
@@ -54,12 +66,14 @@ static void sweep_begin(SubCensusApp* app) {
                 freqs[i] = list[i];
             n = cnt;
         }
+        for(size_t i = 0; i < n; i++)
+            thr[i] = CENSUS_THR_AUTO; /* no per-band threshold -> Auto/global (§3.1) */
     }
 
     census_camp_view_set_jump_callback(app->camp_view, sweep_jump_cb, app);
     census_worker_configure(app->worker, &app->settings, app->settings.place_id);
     census_worker_set_callback(app->worker, sweep_worker_cb, app);
-    census_worker_start_sweep(app->worker, freqs, n, app->settings.dwell_ms);
+    census_worker_start_sweep(app->worker, freqs, thr, n, app->settings.dwell_ms);
 
     app->live_timer = furi_timer_alloc(sweep_timer_cb, FuriTimerTypePeriodic, app);
     furi_timer_start(app->live_timer, 100);

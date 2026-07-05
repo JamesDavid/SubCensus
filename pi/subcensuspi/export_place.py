@@ -15,9 +15,16 @@ import datetime as _dt
 import json
 from pathlib import Path
 
-from . import taxonomy
+from . import fieldmap, taxonomy
 from .db import Database
 from .dsp import cadence
+
+# Coverage-gap thresholds (occupancy digest, System §8/§9): a large unmonitored span between
+# active bins, plus ISM segments with no occupancy at all.
+_COVERAGE_GAP_HZ = 1_000_000
+_ISM_CENTERS = {"315 MHz": 315_000_000, "433.92 MHz": 433_920_000,
+                "868 MHz": 868_000_000, "915 MHz": 915_000_000}
+_ISM_NEAR_HZ = 2_000_000
 
 # Reference grounding (System §8): ISM band -> typical devices + typical cadences per class.
 ISM_BANDS = {
@@ -55,6 +62,39 @@ def _device_cadence(db: Database, device_id: str) -> dict:
     }
 
 
+def _field_discovery(db: Database, device_id: str) -> dict | None:
+    """Deterministic §7b evidence for a needs-ID device: the differential segment classes +
+    trailing-checksum guess over its reconstructed frame corpus (via the passive Pi field-map
+    discovery). RX-only, no TX (System §7b). Grounds the model's field_maps proposal (System §8).
+    Returns None when there aren't >=2 alignable frames the differential needs."""
+    prop = fieldmap.analyze_device(db, device_id)
+    if prop is None:
+        return None
+    return {
+        "n_frames": prop.n_frames,
+        "n_bytes": prop.n_bytes,
+        "segments": [
+            {"name": s.name, "start_bit": s.start_bit, "length": s.length, "class": s.cls}
+            for s in prop.fields
+        ],
+        "checksum": prop.checksum,
+    }
+
+
+def _coverage_gaps(active_freqs: list[int]) -> list[dict]:
+    """Simple occupancy coverage gaps (System §8): large unmonitored spans between active bins,
+    plus ISM segments with no occupancy at all."""
+    gaps: list[dict] = []
+    fs = sorted({int(f) for f in active_freqs})
+    for a, b in zip(fs, fs[1:]):
+        if b - a > _COVERAGE_GAP_HZ:
+            gaps.append({"type": "unmonitored-span", "from_hz": a, "to_hz": b, "span_hz": b - a})
+    for band, center in _ISM_CENTERS.items():
+        if not any(abs(f - center) <= _ISM_NEAR_HZ for f in fs):
+            gaps.append({"type": "band-no-occupancy", "band": band})
+    return gaps
+
+
 def build_bundle(db: Database, place: str, *, occupancy_csv: str | Path | None = None,
                  protocol_map: list[dict] | None = None, generated: str | None = None) -> dict:
     protocol_map = protocol_map or []
@@ -83,7 +123,15 @@ def build_bundle(db: Database, place: str, *, occupancy_csv: str | Path | None =
                 "device_class": cand.get("device_class"),
                 "match_source": "decoder",
             }
-        (identified if (d["device_class"] or d["label"]) else needs_id).append(entry)
+        if d["device_class"] or d["label"]:
+            identified.append(entry)
+        else:
+            # ground the field_maps proposal for a needs-ID device in the §7b differential +
+            # checksum guess over its capture corpus (System §8), when frames are reconstructable.
+            fd = _field_discovery(db, d["device_id"])
+            if fd is not None:
+                entry["field_discovery"] = fd
+            needs_id.append(entry)
 
     unknowns = []
     for u in db.list_unknowns(place):
@@ -129,7 +177,8 @@ def _occupancy_digest(occupancy_csv: str | Path | None) -> dict:
          "crossings": b.crossings}
         for b in bins[:15] if b.occupancy > 0
     ]
-    return {"top_bins": top, "n_bins": len(bins)}
+    active_freqs = [b.freq_hz for b in bins if b.occupancy > 0]
+    return {"top_bins": top, "n_bins": len(bins), "coverage_gaps": _coverage_gaps(active_freqs)}
 
 
 def render_prompt(bundle: dict) -> str:

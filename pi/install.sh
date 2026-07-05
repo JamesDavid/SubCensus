@@ -56,5 +56,6 @@ No dongle yet? Drive the whole decode -> catalog -> dashboard path from a record
   python -m subcensuspi.collector.main --config config.example.yaml \\
       --replay ../test/fixtures/rtl433/home_stream.jsonl --db census.db
 
-Run it for real under systemd (collector + web): see pi/README.md and pi/systemd/.
+Run it for real under systemd (collector + web): see pi/README.md and the unit files in
+pi/subcensuspi/systemd/ (subcensuspi-collector.service + subcensuspi-web.service).
 MSG

@@ -106,6 +106,24 @@ void census_place_file(const char* place_id, const char* filename, char* out, si
  * 0 if the watchlist is absent/empty (Sweep then falls back to the preset list, System §9). */
 size_t census_watchlist_freqs(Storage* storage, const char* place_id, uint32_t* out, size_t cap);
 
+/* Load watchlist freqs + their adaptive per-band thresholds (col threshold_dbm) into
+ * out_freqs[cap]/out_thr[cap], skipping user-exclude rows. Returns the count (§3.1/§3.3 Stage C).
+ * out_thr may be NULL if only frequencies are wanted. */
+size_t census_watchlist_load(
+    Storage* storage,
+    const char* place_id,
+    uint32_t* out_freqs,
+    float* out_thr,
+    size_t cap);
+
+/* The adaptive threshold for a single watchlist frequency (Camp §3.2). Returns true + *out_thr
+ * if `freq` is a (non-excluded) watchlist entry; false otherwise (caller uses Auto/global). */
+bool census_watchlist_threshold(
+    Storage* storage,
+    const char* place_id,
+    uint32_t freq,
+    float* out_thr);
+
 /* The busiest watchlist entry (highest occupancy) for Camp Auto (§3.2). 0 if no watchlist. */
 uint32_t census_watchlist_busiest(Storage* storage, const char* place_id);
 

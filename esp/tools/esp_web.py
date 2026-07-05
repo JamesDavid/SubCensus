@@ -79,6 +79,22 @@ def parse_candidates(text: str) -> list[dict]:
     return cands
 
 
+def parse_taxonomy(text: str) -> list[dict]:
+    """The label taxonomy the Review dropdown consumes (System §5). Each class id must be a
+    real taxonomy id (validated against the SHARED taxonomy so the ESP can't drift)."""
+    obj = json.loads(text)
+    classes = obj.get("classes", [])
+    if not classes:
+        raise ValueError("/api/taxonomy has no classes")
+    tax = Taxonomy.load()
+    for c in classes:
+        if not {"id", "name"} <= set(c):
+            raise ValueError(f"taxonomy class missing keys: {c}")
+        if not tax.is_valid(c["id"]):
+            raise ValueError(f"taxonomy class id not in shared taxonomy: {c['id']!r}")
+    return classes
+
+
 FIELDMAP_KEYS = {"signature", "nbits", "n_bytes", "fields", "checksum", "confidence", "reasoning"}
 FIELD_KEYS = {"name", "start_bit", "length", "class", "semantics"}
 FIELD_CLASSES = {"static", "slow", "counter", "checksum", "data"}

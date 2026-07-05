@@ -97,3 +97,8 @@ def test_build_argv_hop():
     assert argv.count("-f") == 2
     assert "-H" in argv and "30" in argv
     assert "-d" in argv and ":00000001" in argv
+    # §4 baseline: -M stats (periodic health) + -Y autolevel (adaptive detection level)
+    stats_at = [i for i, a in enumerate(argv) if a == "-M" and argv[i + 1] == "stats"]
+    assert stats_at, "expected -M stats in the §4 baseline"
+    y_at = argv.index("-Y")
+    assert argv[y_at + 1] == "autolevel"

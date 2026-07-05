@@ -11,13 +11,17 @@
 #include <string.h>
 
 #include "../shared/core/sc_feature.h"
+#include "../shared/core/sc_knn.h"
 #include "../shared/core/sc_sub.h"
+#include "census_brain.h"
 #include "census_schema.h"
 #include "census_taxonomy.h"
 
 #define CENSUS_TIMINGS_CAP 4096
 #define CENSUS_RECENT_CAP  16
 #define CENSUS_SUB_BUF     20480
+#define CENSUS_AUTO_MARGIN 12.0f /* Auto threshold = noise floor + margin (§4) */
+#define CENSUS_CAL_MS      2000 /* Auto noise-floor sample window (§4) */
 
 struct CensusWorker {
     FuriThread* thread;
@@ -30,12 +34,16 @@ struct CensusWorker {
     char place_id[CENSUS_PLACE_ID_LEN];
     FuriHalSubGhzPreset preset;
     char preset_name[24];
-    float threshold_dbm;
+    float threshold_dbm; /* manual global threshold (used when !rssi_auto and no per-freq thr) */
+    bool rssi_auto; /* Auto = sample noise floor for ~2 s, threshold = floor + margin (§4) */
     uint32_t signal_end_gap_ms;
     uint32_t capture_max_ms;
     uint32_t min_gap_ms;
-    /* sweep list / camp freq */
+    bool match_db; /* check captures against the classification DB at capture time (§4, §5.5) */
+    CensusBrain* brain; /* loaded once when match_db is on (§6 gated k-NN) */
+    /* sweep list / camp freq (+ per-frequency adaptive thresholds, §3.1/§3.3 Stage C) */
     uint32_t freqs[16];
+    float freq_thr[16]; /* CENSUS_THR_AUTO = use Auto/global */
     size_t freq_count;
     uint32_t dwell_ms;
 
@@ -65,6 +73,7 @@ struct CensusWorker {
     volatile float rssi;
     volatile uint32_t current_freq;
     volatile uint32_t hits;
+    uint32_t start_tick;
 
     CensusHit recent[CENSUS_RECENT_CAP];
     size_t recent_len;
@@ -125,14 +134,127 @@ static ScModulation census_preset_modulation(FuriHalSubGhzPreset p) {
     }
 }
 
-/* Finalize one capture: snapshot timings, write .sub, append census_log, notify (§5.1). */
-static void census_process_capture(CensusWorker* w, uint32_t freq, float rssi, float peak) {
-    size_t n = w->timings_len;
-    if(n < 4) { /* too few edges — discard the .sub but still note the blip (§7) */
-        w->timings_len = 0;
-        w->overflow = false;
+/* Classify a capture (§5.5, System §6): decoded protocol -> match_source=decoder; else gated
+ * k-NN against the loaded brain -> match_source=fingerprint. Honors the Match-DB toggle (§4). */
+static void census_classify(
+    CensusWorker* w,
+    const ScFeatureVector* fv,
+    bool decoded,
+    const char* proto,
+    char* name,
+    char* cls,
+    float* conf,
+    char* source) {
+    name[0] = cls[0] = source[0] = '\0';
+    *conf = 0.0f;
+    if(decoded && proto[0]) { /* known-protocol decode (§6 step 1) */
+        strncpy(name, proto, 23);
+        name[23] = '\0';
+        strncpy(source, "decoder", 15);
+        *conf = 0.9f;
         return;
     }
+    if(!w->match_db || !w->brain || w->brain->count == 0) return;
+    ScKnnQuery q;
+    memset(&q, 0, sizeof(q));
+    q.fv = *fv;
+    q.cadence_class = SC_CADENCE_NONE;
+    ScKnnMatch m[1];
+    if(sc_knn_match(&q, w->brain->fps, w->brain->count, m, 1) > 0) { /* §6 step 2 gated k-NN */
+        int idx = m[0].index;
+        const char* dn = w->brain->fps[idx].device_name;
+        strncpy(name, dn ? dn : "?", 23);
+        name[23] = '\0';
+        const char* ci = census_class_id(w->brain->fps[idx].device_class);
+        strncpy(cls, ci ? ci : "", 23);
+        cls[23] = '\0';
+        *conf = m[0].confidence;
+        strncpy(source, "fingerprint", 15);
+    }
+}
+
+/* Append one census_log row (order = CENSUS_LOG_HEADER). A blip has n==0 (empty sub/proto). */
+static void census_log_append(
+    CensusWorker* w,
+    const char* ts,
+    uint32_t freq,
+    float peak,
+    uint32_t duration_ms,
+    int fsk_suspected,
+    const char* proto,
+    const char* match_name,
+    const char* match_class,
+    float match_conf,
+    const char* match_source,
+    const char* sub_rel) {
+    char row[288];
+    snprintf(
+        row,
+        sizeof(row),
+        "%s,%lu,%.1f,%lu,%s,%d,%s,,%s,%s,%.2f,%s,%s,\n",
+        ts,
+        (unsigned long)freq,
+        (double)peak,
+        (unsigned long)duration_ms,
+        w->preset_name,
+        fsk_suspected,
+        proto,
+        match_name,
+        match_class,
+        (double)match_conf,
+        match_source,
+        sub_rel);
+    char log_abs[160];
+    census_place_file(w->place_id, "census_log.csv", log_abs, sizeof(log_abs));
+    File* lf = storage_file_alloc(w->storage);
+    if(storage_file_open(lf, log_abs, FSAM_WRITE, FSOM_OPEN_APPEND)) {
+        storage_file_write(lf, row, strlen(row));
+    }
+    storage_file_close(lf);
+    storage_file_free(lf);
+}
+
+/* Push a hit into the live recent-hits ring (§6). `match` is the resolved tag ("unknown"/"blip"
+ * /decoder or brain name). */
+static void census_recent_push(CensusWorker* w, uint32_t freq, float rssi, const char* match) {
+    w->hits++;
+    furi_mutex_acquire(w->recent_mutex, FuriWaitForever);
+    for(size_t i = (w->recent_len < CENSUS_RECENT_CAP ? w->recent_len : CENSUS_RECENT_CAP - 1);
+        i > 0;
+        i--) {
+        w->recent[i] = w->recent[i - 1];
+    }
+    w->recent[0].freq_hz = freq;
+    w->recent[0].rssi_dbm = rssi;
+    strncpy(w->recent[0].match, match, sizeof(w->recent[0].match) - 1);
+    w->recent[0].match[sizeof(w->recent[0].match) - 1] = '\0';
+    if(w->recent_len < CENSUS_RECENT_CAP) w->recent_len++;
+    furi_mutex_release(w->recent_mutex);
+}
+
+/* Finalize one capture: snapshot timings, write .sub, classify, append census_log, notify (§5.1). */
+static void census_process_capture(CensusWorker* w, uint32_t freq, float rssi, float peak) {
+    size_t n = w->timings_len;
+    char ts[32];
+    census_iso_now(ts, sizeof(ts));
+
+    if(n < 4) {
+        /* too few edges — discard the .sub but still log an RSSI-only "blip" row (§7) so a
+         * busy-but-uncapturable spot is still noted. */
+        census_log_append(w, ts, freq, peak, 0, 0, "", "", "", 0.0f, "", "");
+        census_recent_push(w, freq, rssi, "blip");
+        w->timings_len = 0;
+        w->overflow = false;
+        w->last_fsk_suspected = 0;
+        if(w->callback) w->callback(w->callback_context);
+        return;
+    }
+
+    /* duration = total airtime of the frame (sum of |timings|), microseconds -> ms (§5.4) */
+    uint64_t dur_us = 0;
+    for(size_t i = 0; i < n; i++)
+        dur_us += (uint64_t)(w->timings[i] < 0 ? -w->timings[i] : w->timings[i]);
+    uint32_t duration_ms = (uint32_t)(dur_us / 1000);
 
     /* auto-classify result + Dual OOK/FSK hint (§5.3): OOK decode failed on a strong signal */
     const char* proto = w->decoded ? w->decoded_name : "";
@@ -141,17 +263,16 @@ static void census_process_capture(CensusWorker* w, uint32_t freq, float rssi, f
                                                                                                0;
     w->last_fsk_suspected = fsk_suspected;
 
-    char ts[32];
-    census_iso_now(ts, sizeof(ts));
-
     ScFeatureVector fv;
     sc_feature_compute(w->timings, n, (int32_t)freq, census_preset_modulation(w->preset), &fv);
 
-    /* SD full (§6.1): stop writing captures, but still log an RSSI-only "blip" row (empty
-     * sub_file) so busy-but-uncapturable activity is still noted. */
-    bool sd_low = census_sd_low(w->storage);
+    /* classification (§5.5, System §6) — match_* land in census_log; advisory, never auto-labels */
+    char match_name[24], match_class[24], match_source[16];
+    float match_conf = 0.0f;
+    census_classify(w, &fv, w->decoded, proto, match_name, match_class, &match_conf, match_source);
 
-    /* write the standard .sub into the active place's captures/ (skipped when the card is low) */
+    /* SD full (§6.1): stop writing captures, but still log the row (empty sub_file). */
+    bool sd_low = census_sd_low(w->storage);
     char sub_rel[128] = "";
     if(!sd_low) {
         snprintf(
@@ -180,55 +301,34 @@ static void census_process_capture(CensusWorker* w, uint32_t freq, float rssi, f
         if(subbuf) free(subbuf);
     }
 
-    /* append the census_log row (order = CENSUS_LOG_HEADER; classification match_* land in M6) */
-    char row[256];
-    snprintf(
-        row,
-        sizeof(row),
-        "%s,%lu,%.1f,%lu,%s,%d,%s,,,,%.2f,,%s,\n",
+    census_log_append(
+        w,
         ts,
-        (unsigned long)freq,
-        (double)peak,
-        (unsigned long)0,
-        w->preset_name,
+        freq,
+        peak,
+        duration_ms,
         fsk_suspected,
         proto,
-        (double)0.0f,
+        match_name,
+        match_class,
+        match_conf,
+        match_source,
         sub_rel);
-    (void)rssi;
-    char log_abs[160];
-    census_place_file(w->place_id, "census_log.csv", log_abs, sizeof(log_abs));
-    File* lf = storage_file_alloc(w->storage);
-    if(storage_file_open(lf, log_abs, FSAM_WRITE, FSOM_OPEN_APPEND)) {
-        storage_file_write(lf, row, strlen(row));
-    }
-    storage_file_close(lf);
-    storage_file_free(lf);
 
-    /* live state + recent-hits ring */
-    w->hits++;
-    furi_mutex_acquire(w->recent_mutex, FuriWaitForever);
-    for(size_t i = (w->recent_len < CENSUS_RECENT_CAP ? w->recent_len : CENSUS_RECENT_CAP - 1);
-        i > 0;
-        i--) {
-        w->recent[i] = w->recent[i - 1];
-    }
-    w->recent[0].freq_hz = freq;
-    w->recent[0].rssi_dbm = rssi;
-    strncpy(w->recent[0].match, "unknown", sizeof(w->recent[0].match) - 1);
-    w->recent[0].match[sizeof(w->recent[0].match) - 1] = '\0';
-    if(w->recent_len < CENSUS_RECENT_CAP) w->recent_len++;
-    furi_mutex_release(w->recent_mutex);
+    /* recent-hits tag: decoded/brain name if known, else unknown (§6, §8 fix: real match) */
+    const char* tag = match_name[0] ? match_name : "unknown";
+    census_recent_push(w, freq, rssi, tag);
 
     w->timings_len = 0;
     w->overflow = false;
 
     FURI_LOG_I(
         "SubCensus",
-        "SC scene=%s action=capture freq=%lu rssi=%.1f",
+        "SC scene=%s action=capture freq=%lu rssi=%.1f match=%s",
         w->mode == CensusWorkerModeCamp ? "camp" : "sweep",
         (unsigned long)freq,
-        (double)rssi);
+        (double)rssi,
+        tag);
     if(w->callback) w->callback(w->callback_context);
 }
 
@@ -261,9 +361,28 @@ static void census_dual_after_capture(CensusWorker* w) {
     }
 }
 
-/* Monitor one frequency for up to `window_ms` (0 = until stopped). Captures on threshold.
+/* Auto noise-floor calibration (§4): sample RSSI over `ms` and return floor + margin. The
+ * sampling loop is real; live RSSI values need real airtime (TODO(hw)). */
+static float census_auto_threshold(CensusWorker* w, uint32_t ms) {
+    float floor = 0.0f;
+    bool first = true;
+    uint32_t start = furi_get_tick();
+    while(w->running && (furi_get_tick() - start) < ms) {
+        float r = subghz_devices_get_rssi(w->device);
+        if(first || r < floor) {
+            floor = r;
+            first = false;
+        }
+        furi_delay_ms(5);
+    }
+    return floor + CENSUS_AUTO_MARGIN;
+}
+
+/* Monitor one frequency for up to `window_ms` (0 = until stopped). Captures on threshold. `thr`
+ * is the per-frequency detect threshold (watchlist, §3.1/§3.3 Stage C) or CENSUS_THR_AUTO to use
+ * the Auto floor+margin / manual global threshold (§4).
  * Live RSSI/capture needs real airtime (TODO(hw)); the state machine + processing are real. */
-static void census_monitor_freq(CensusWorker* w, uint32_t freq, uint32_t window_ms) {
+static void census_monitor_freq(CensusWorker* w, uint32_t freq, float thr, uint32_t window_ms) {
     w->current_freq = freq;
     /* start each frequency on the base preset unless a 2-FSK retry is armed (§5.3) */
     if(w->dual && !w->fsk_retry_active) {
@@ -277,6 +396,17 @@ static void census_monitor_freq(CensusWorker* w, uint32_t freq, uint32_t window_
     w->timings_len = 0;
     subghz_devices_start_async_rx(w->device, census_capture_cb, w);
 
+    /* effective detect threshold: explicit watchlist per-band value wins (§3.1); else Auto
+     * (sample floor + margin, §4); else the manual global threshold. */
+    float eff;
+    if(thr > CENSUS_THR_AUTO + 1.0f) {
+        eff = thr;
+    } else if(w->rssi_auto) {
+        eff = census_auto_threshold(w, w->mode == CensusWorkerModeCamp ? CENSUS_CAL_MS : 100);
+    } else {
+        eff = w->threshold_dbm;
+    }
+
     uint32_t start = furi_get_tick();
     bool capturing = false;
     uint32_t capture_start = 0;
@@ -287,7 +417,7 @@ static void census_monitor_freq(CensusWorker* w, uint32_t freq, uint32_t window_
         w->rssi = rssi;
         uint32_t now = furi_get_tick();
 
-        if(rssi >= w->threshold_dbm) {
+        if(rssi >= eff) {
             if(!capturing) {
                 capturing = true;
                 capture_start = now;
@@ -327,10 +457,10 @@ static int32_t census_worker_thread(void* context) {
 
     while(w->running) {
         if(w->mode == CensusWorkerModeCamp) {
-            census_monitor_freq(w, w->freqs[0], 0);
+            census_monitor_freq(w, w->freqs[0], w->freq_thr[0], 0);
         } else {
             for(size_t i = 0; i < w->freq_count && w->running; i++) {
-                census_monitor_freq(w, w->freqs[i], w->dwell_ms);
+                census_monitor_freq(w, w->freqs[i], w->freq_thr[i], w->dwell_ms);
             }
         }
     }
@@ -368,6 +498,7 @@ void census_worker_free(CensusWorker* w) {
     subghz_receiver_free(w->receiver);
     subghz_environment_free(w->env);
     subghz_devices_deinit();
+    if(w->brain) free(w->brain);
     furi_mutex_free(w->recent_mutex);
     free(w);
 }
@@ -380,12 +511,19 @@ void census_worker_set_callback(CensusWorker* w, CensusWorkerCallback cb, void* 
 void census_worker_configure(CensusWorker* w, const CensusSettings* s, const char* place_id) {
     strncpy(w->place_id, place_id, CENSUS_PLACE_ID_LEN - 1);
     w->place_id[CENSUS_PLACE_ID_LEN - 1] = '\0';
-    w->threshold_dbm = s->rssi_auto ? -80 : (float)s->rssi_threshold;
+    w->rssi_auto = s->rssi_auto;
+    w->threshold_dbm = (float)s->rssi_threshold; /* manual value; Auto calibrates per-freq (§4) */
     w->signal_end_gap_ms = s->signal_end_gap_ms;
     w->capture_max_ms = s->capture_max_ms;
     w->min_gap_ms = s->min_gap_ms;
     w->dwell_ms = s->dwell_ms;
     w->auto_classify = s->auto_classify;
+    /* Match against DB (§4): load the global brain once for capture-time gated k-NN (§5.5). */
+    w->match_db = s->match_db;
+    if(w->match_db && !w->brain) {
+        w->brain = malloc(sizeof(CensusBrain));
+        if(w->brain) census_brain_load(w->storage, w->brain);
+    }
     w->dual = (s->capture_preset == CensusCaptureDual);
     switch(s->capture_preset) {
     case CensusCaptureOok270:
@@ -414,13 +552,15 @@ static void census_worker_run(CensusWorker* w) {
     if(w->running) return;
     w->running = true;
     w->hits = 0;
+    w->start_tick = furi_get_tick();
     w->thread = furi_thread_alloc_ex("CensusWorker", 4096, census_worker_thread, w);
     furi_thread_start(w->thread);
 }
 
-void census_worker_start_camp(CensusWorker* w, uint32_t freq_hz) {
+void census_worker_start_camp(CensusWorker* w, uint32_t freq_hz, float threshold_dbm) {
     w->mode = CensusWorkerModeCamp;
     w->freqs[0] = freq_hz;
+    w->freq_thr[0] = threshold_dbm;
     w->freq_count = 1;
     census_worker_run(w);
 }
@@ -428,12 +568,15 @@ void census_worker_start_camp(CensusWorker* w, uint32_t freq_hz) {
 void census_worker_start_sweep(
     CensusWorker* w,
     const uint32_t* freqs,
+    const float* thresholds,
     size_t count,
     uint32_t dwell_ms) {
     w->mode = CensusWorkerModeSweep;
     w->freq_count = count < 16 ? count : 16;
-    for(size_t i = 0; i < w->freq_count; i++)
+    for(size_t i = 0; i < w->freq_count; i++) {
         w->freqs[i] = freqs[i];
+        w->freq_thr[i] = thresholds ? thresholds[i] : CENSUS_THR_AUTO;
+    }
     w->dwell_ms = dwell_ms;
     census_worker_run(w);
 }
@@ -460,6 +603,22 @@ uint32_t census_worker_current_freq(CensusWorker* w) {
 
 uint32_t census_worker_hits(CensusWorker* w) {
     return w->hits;
+}
+
+uint32_t census_worker_elapsed_s(CensusWorker* w) {
+    return w->running ? (furi_get_tick() - w->start_tick) / 1000 : 0;
+}
+
+uint8_t census_worker_sweep_count(CensusWorker* w) {
+    return w->mode == CensusWorkerModeSweep ? (uint8_t)w->freq_count : 0;
+}
+
+uint8_t census_worker_sweep_pos(CensusWorker* w) {
+    if(w->mode != CensusWorkerModeSweep) return 0;
+    uint32_t f = w->current_freq;
+    for(size_t i = 0; i < w->freq_count; i++)
+        if(w->freqs[i] == f) return (uint8_t)(i + 1);
+    return 0;
 }
 
 size_t census_worker_recent_hits(CensusWorker* w, CensusHit* out, size_t max) {

@@ -110,6 +110,7 @@ typedef struct {
     char review_cand_class[24]; /* top k-NN candidate device_class ("" if none) — Label "Accept" */
     char review_cand_name[24]; /* top candidate device_name (for the Accept label) */
     uint32_t review_jump_freq; /* preselect this freq's newest row in Review (live-list jump, §6) */
+    uint8_t replay_repeat; /* Replay repeat count 1..10 (§6); edited-TX is forced to 1 */
 
     CensusSettings settings;
 

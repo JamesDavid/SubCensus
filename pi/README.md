@@ -44,7 +44,35 @@ SUBCENSUSPI_DB=/tmp/census.db uvicorn subcensuspi.web.app:app --host 0.0.0.0 --p
 
 Config is `config.example.yaml` (Pi §8): dongles (single-hop or multi-dongle by serial),
 `place`, `places_dir`, global `signatures_dir`, `iq_dir` + `max_iq_gb` disk guard, MQTT/HA,
-web host/port. Two systemd services in production (Pi §9): `collector` + `web`.
+web host/port, and opt-in `prioritize_watchlist` (reorder hop/dongle attention by the place
+watchlist, §3). Two systemd services in production (Pi §9): `collector` + `web`.
+
+### Run under systemd (Pi §9)
+
+Unit files live in [`subcensuspi/systemd/`](./subcensuspi/systemd/):
+`subcensuspi-collector.service` (owns rtl_433 → SQLite + MQTT/HA) and
+`subcensuspi-web.service` (uvicorn dashboard, ordered after the collector). Both are
+`Restart=always`; the collector *additionally* relaunches a dead rtl_433 per-dongle with
+backoff internally (Pi §9), so one failed dongle never restarts the others. Edit the
+`User=`/`WorkingDirectory=`/`ExecStart=` paths to match your install, then:
+
+```
+sudo cp subcensuspi/systemd/subcensuspi-*.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now subcensuspi-collector subcensuspi-web
+```
+
+### Export into the shared brain (Pi §10a)
+
+Emit the Pi's `fingerprints.csv` + `protocol_map.csv` (via the shared brain writers) so
+`build_signatures.py` can merge them with the Zero's labeled data:
+
+```
+python -m subcensuspi.brain_export --config config.yaml --out pi_export
+# then merge (from the repo tools/):
+python build_signatures.py --signatures-dir <signatures_dir> \
+    --fingerprints pi_export/fingerprints.csv --protocol-map pi_export/protocol_map.csv
+```
 
 ## Using the dashboard — section by section
 

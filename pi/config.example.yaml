@@ -6,6 +6,7 @@ dongles:
     ppm: 0
     hop_seconds: 30         # single-dongle hop across the freqs above
 capture_unknowns: false     # save IQ/pulse for undecoded bursts (M4; disk-guarded)
+prioritize_watchlist: false # opt-in: reorder hop/dongle attention by the place watchlist (§3)
 place: home                 # active Place profile (§9a); stamps all records
 places_dir: /var/lib/subcensuspi/places
 signatures_dir: /var/lib/subcensuspi/signatures   # GLOBAL brain, shared with the Zero

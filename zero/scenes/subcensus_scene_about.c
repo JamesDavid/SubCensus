@@ -1,5 +1,6 @@
 #include "../subcensuszero_i.h"
 
+#include <furi_hal_version.h>
 #include <stdio.h>
 
 /* About (Zero §6): version, built-against SDK/API, passive-RX note, active place, storage tier
@@ -27,13 +28,16 @@ void subcensus_scene_about_on_enter(void* context) {
         snprintf(storage_line, sizeof(storage_line), "Storage: /ext SD (absent)");
     }
 
-    static char text[640];
+    /* runtime firmware version (so a built-against/running API mismatch is diagnosable, §6/§6.1) */
+    const char* fw_ver = version_get_version(furi_hal_version_get_firmware_version());
+
+    static char text[720];
     snprintf(
         text,
         sizeof(text),
         "SubCensusZero v0.1\n"
-        "SDK: release 1.4.3\n"
-        "API: 87.1 (f7)\n"
+        "Built API: 87.1 (f7)\n"
+        "Firmware: %s\n"
         "\n"
         "Monitoring is passive:\n"
         "Sweep/Camp/Recon never TX.\n"
@@ -44,6 +48,11 @@ void subcensus_scene_about_on_enter(void* context) {
         "%s\n"
         "Place: %s\n"
         "\n"
+        "Sweep: revisit ~ N x dwell;\n"
+        "longer lists/dwell miss one-\n"
+        "shot presses. Camp catches\n"
+        "one-shots; Recon prunes N.\n"
+        "\n"
         "Battery: continuous RX draws\n"
         "~30-40 mA; a full charge lasts\n"
         "~5-8 h of Camp/Sweep. Recon\n"
@@ -52,6 +61,7 @@ void subcensus_scene_about_on_enter(void* context) {
         "\n"
         "Prior art: ProtoView, Read RAW,\n"
         "Freq/Spectrum Analyzer, FlipRSDR.",
+        fw_ver,
         storage_line,
         place_name);
 

@@ -40,15 +40,22 @@ void census_worker_configure(
     const CensusSettings* settings,
     const char* place_id);
 
-/* Camp on one frequency (§3.2). */
-void census_worker_start_camp(CensusWorker* worker, uint32_t freq_hz);
+/* Camp on one frequency (§3.2). `threshold_dbm` is the per-frequency detect threshold, or
+ * CENSUS_THR_AUTO to use the Auto noise-floor calibration / global threshold. */
+void census_worker_start_camp(CensusWorker* worker, uint32_t freq_hz, float threshold_dbm);
 
-/* Sweep a frequency list, dwelling `dwell_ms` on each (§3.1). */
+/* Sweep a frequency list, dwelling `dwell_ms` on each (§3.1). `thresholds` (may be NULL) gives
+ * the per-frequency adaptive detect threshold from the watchlist (§3.1/§3.3 Stage C); entries
+ * set to CENSUS_THR_AUTO (or a NULL array) fall back to Auto/global. */
 void census_worker_start_sweep(
     CensusWorker* worker,
     const uint32_t* freqs,
+    const float* thresholds,
     size_t count,
     uint32_t dwell_ms);
+
+/* Sentinel: "no explicit per-frequency threshold — use Auto/global". */
+#define CENSUS_THR_AUTO (-999.0f)
 
 void census_worker_stop(CensusWorker* worker);
 bool census_worker_is_running(CensusWorker* worker);
@@ -57,6 +64,11 @@ bool census_worker_is_running(CensusWorker* worker);
 float census_worker_rssi(CensusWorker* worker);
 uint32_t census_worker_current_freq(CensusWorker* worker);
 uint32_t census_worker_hits(CensusWorker* worker);
+uint32_t census_worker_elapsed_s(CensusWorker* worker);
+/* Sweep position: 1-based index of the current freq in the list, and the list length. Count is
+ * 0 in Camp mode (single frequency, no position cursor). */
+uint8_t census_worker_sweep_pos(CensusWorker* worker);
+uint8_t census_worker_sweep_count(CensusWorker* worker);
 
 /* Most-recent capture summary for the live "recent hits" list (§6). */
 typedef struct {

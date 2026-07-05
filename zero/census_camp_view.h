@@ -31,6 +31,15 @@ void census_camp_view_set_jump_callback(
 /* Show/hide an "SD LOW" banner (§6.1 SD full: captures stop, blip rows continue). */
 void census_camp_view_set_low(CensusCampView* v, bool low);
 
+/* Live status (§6): elapsed seconds, a brief "REC" overlay after a capture, and the sweep
+ * position (pos/count; count 0 = camp mode, no position shown). */
+void census_camp_view_set_status(
+    CensusCampView* v,
+    uint32_t elapsed_s,
+    bool rec,
+    uint8_t pos,
+    uint8_t count);
+
 /* Push the latest worker state into the view model (called from a refresh timer). */
 void census_camp_view_update(
     CensusCampView* v,

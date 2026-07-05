@@ -80,3 +80,32 @@ def test_discovery_disabled():
     pub = MqttPublisher(MqttConfig(enabled=True, ha_discovery=False), client=fake)
     assert pub.publish_discovery(DEVICE) == 0
     assert fake.published == []
+
+
+def test_collector_publishes_to_mqtt_via_fake_broker(tmp_path, fixtures_dir):
+    """A1: the collector ingest path republishes to HA over MQTT (Pi §9). Wired end-to-end
+    against a fake broker — only the socket connect needs a real broker (TODO(hw))."""
+    from subcensuspi.collector.collector import Collector
+    from subcensuspi.collector.rtl433 import replay_file
+    from subcensuspi.db import Database
+
+    fake = FakeClient()
+    pub = MqttPublisher(MqttConfig(enabled=True, ha_discovery=True, base_topic="subcensuspi"),
+                        client=fake)
+    pub.connect()
+    db = Database(tmp_path / "census.db")
+    c = Collector(db, place="home", mqtt=pub)
+    c.process_stream(replay_file(fixtures_dir / "rtl433" / "home_stream.jsonl"))
+
+    # discovery is published once per distinct device (retained); state every reception (not).
+    discovery = [p for p in fake.published if p[0].startswith(HA_PREFIX)]
+    state = [p for p in fake.published if "/device/" in p[0] and p[0].endswith("/state")]
+    assert len(state) == 7  # 7 decoded receptions in the fixture
+    assert all(retain for _, _, retain in discovery)
+    assert all(not retain for _, _, retain in state)
+    # 4 distinct devices x 3 entities each = 12 discovery configs; no dup announces
+    assert len({t for t, _, _ in discovery}) == 12
+    # state carries the live rssi and the rolled-up device fields
+    last = json.loads(state[-1][1])
+    assert "rssi" in last and "count" in last and "last_seen" in last
+    db.close()

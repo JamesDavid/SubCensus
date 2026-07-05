@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import json
 
-from .db import Database
+from .db import Database, iso_to_epoch
+from .dsp import cadence as _cadence
 
 
 def export_protocol_map_from_devices(db: Database, place: str | None = None) -> list[dict]:
@@ -33,9 +34,19 @@ def export_protocol_map_from_devices(db: Database, place: str | None = None) -> 
     return rows
 
 
+def _unknown_cadence(db: Database, place: str, freq_hz: int) -> _cadence.CadenceEstimate:
+    """Cadence of an unknown signal from its own reception history — every capture of the same
+    (place, freq) burst is one arrival (System §7a). The Pi's continuous corpus makes this the
+    cleanest inter-arrival estimate (Pi §5)."""
+    secs = [e for e in (iso_to_epoch(t) for t in db.unknown_timestamps(place, freq_hz))
+            if e is not None]
+    return _cadence.from_timestamps(secs)
+
+
 def export_fingerprints_from_unknowns(db: Database, place: str | None = None) -> list[dict]:
     """Build fingerprint rows from labeled unknowns that carry a feature vector (active-
-    learning loop, System §6). source=user."""
+    learning loop, System §6). source=user. The dropout-robust cadence_* soft features (§7a)
+    are filled from the unknown signal's reception history at that (place, freq)."""
     rows: list[dict] = []
     for u in db.list_unknowns(place):
         cls = u["device_class"]
@@ -49,6 +60,7 @@ def export_fingerprints_from_unknowns(db: Database, place: str | None = None) ->
         if not fv:
             continue
         syms = fv.get("sym_dur_us", [])
+        cad = _unknown_cadence(db, u["place"], u["freq_hz"])
         rows.append({
             "id": "",  # assigned on merge
             "freq_bin": fv.get("freq_bin", 0),
@@ -63,9 +75,60 @@ def export_fingerprints_from_unknowns(db: Database, place: str | None = None) ->
             "device_name": u["label"] or "",
             "device_class": cls,
             "source": "user",
-            "cadence_class": "",
-            "period_s": "",
-            "period_regularity": "",
-            "cadence_samples": "",
+            "cadence_class": cad.cls,
+            "period_s": cad.period_s if cad.period_s > 0 else "",
+            "period_regularity": round(cad.regularity, 4) if cad.samples else "",
+            "cadence_samples": cad.samples if cad.samples else "",
         })
     return rows
+
+
+# --- production CLI (Pi §10a): emit the shared-brain exports build_signatures.py ingests ---
+
+def write_exports(db: Database, out_dir, place: str | None = None) -> tuple[int, int]:
+    """Write pi_export/fingerprints.csv + protocol_map.csv via the shared brain writers
+    (schema-validated on merge). Returns (n_fingerprints, n_protocol_rows)."""
+    from pathlib import Path
+
+    from subcensus_tools import brain  # runtime import: only the CLI needs tools on the path
+
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    fps = export_fingerprints_from_unknowns(db, place)
+    pms = export_protocol_map_from_devices(db, place)
+    brain.write_fingerprints(fps, out / "fingerprints.csv")
+    brain.write_protocol_map(pms, out / "protocol_map.csv")
+    return len(fps), len(pms)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Emit the Pi's shared-brain exports so build_signatures.py can ingest them (Pi §10a):
+
+        python -m subcensuspi.brain_export --config config.yaml --out pi_export
+    """
+    import argparse
+
+    from .config import Config
+
+    ap = argparse.ArgumentParser(description=main.__doc__)
+    ap.add_argument("--config", required=True, help="YAML config (Pi §8)")
+    ap.add_argument("--db", help="override db_path")
+    ap.add_argument("--place", help="override the active place (default: config place)")
+    ap.add_argument("--out", default="pi_export", help="output dir (default: pi_export)")
+    ap.add_argument("--all-places", action="store_true",
+                    help="export across all places instead of just the active one")
+    args = ap.parse_args(argv)
+
+    cfg = Config.load(args.config)
+    db = Database(args.db or cfg.db_path)
+    db.refresh_all_cadences()  # keep the catalog's cadence_* current before exporting (§5/§7a)
+    place = None if args.all_places else (args.place or cfg.place)
+    n_fp, n_pm = write_exports(db, args.out, place)
+    db.close()
+    print(f"wrote {args.out}/fingerprints.csv ({n_fp} rows) + "
+          f"{args.out}/protocol_map.csv ({n_pm} rows)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

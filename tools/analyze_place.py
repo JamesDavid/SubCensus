@@ -67,16 +67,109 @@ def proposed_labels(analysis: dict, confidence_floor: float = 0.8) -> list[dict]
     ]
 
 
+def apply_labels(analysis: dict, signatures_dir: str | Path, confidence_floor: float = 0.8,
+                 *, valid_classes: set[str] | None = None) -> list[dict]:
+    """`--apply` write-back (System §8): take the high-confidence identifications and write them
+    into the GLOBAL brain via the shared `protocol_map.csv` (signature -> device_class), using
+    the same merge machinery build_signatures.py drives. Never silent — returns exactly what was
+    applied so the CLI can print it (System §6: explicit confirmation, gated by a floor).
+
+    Each identification maps a decoded `signature` (protocol/model name) to a `candidate`
+    device_class; that is a protocol_map row (System §6 tier 1). `valid_classes`, when given,
+    skips any candidate outside the taxonomy (System §5) so the brain can't be poisoned."""
+    from subcensus_tools import brain
+
+    proposed = proposed_labels(analysis, confidence_floor)
+    sig = Path(signatures_dir)
+    sig.mkdir(parents=True, exist_ok=True)
+    pm_path = sig / "protocol_map.csv"
+    existing = brain.read_protocol_map(pm_path)
+
+    applied: list[dict] = []
+    for idn in proposed:
+        proto = str(idn.get("signature", "")).strip()
+        cls = str(idn.get("candidate", "")).strip()
+        if not proto or not cls:
+            continue
+        if valid_classes is not None and cls not in valid_classes:
+            continue
+        conf = float(idn.get("confidence", 0))
+        applied.append({
+            "protocol": proto,
+            "friendly_name": str(idn.get("name") or proto),
+            "device_class": cls,
+            "typical_use": "",
+            "notes": f"applied via analyze_place --apply (confidence {conf:.2f}, source=user)",
+        })
+    if applied:
+        merged = brain.merge_protocol_map([existing, applied])
+        brain.write_protocol_map(merged, pm_path)
+    return applied
+
+
+def diff_analyses(prev: dict | None, curr: dict) -> dict:
+    """Diff a prior analysis vs the current one (System §8: re-runnable, diffs vs the prior).
+    Reports what identifications / field_maps / anomalies changed."""
+    prev = prev or {}
+
+    def _keyed(items: list, key: str) -> dict:
+        return {str(it.get(key, "")): it for it in items if isinstance(it, dict)}
+
+    out: dict = {}
+    for section in ("identifications", "field_maps"):
+        p = _keyed(prev.get(section, []), "signature")
+        c = _keyed(curr.get(section, []), "signature")
+        out[section] = {
+            "added": [c[k] for k in c if k not in p],
+            "removed": [p[k] for k in p if k not in c],
+            "changed": [{"signature": k, "before": p[k], "after": c[k]}
+                        for k in c if k in p and c[k] != p[k]],
+        }
+    pa = {json.dumps(x, sort_keys=True) for x in prev.get("anomalies", [])}
+    ca = {json.dumps(x, sort_keys=True) for x in curr.get("anomalies", [])}
+    out["anomalies"] = {
+        "added": [json.loads(x) for x in sorted(ca - pa)],
+        "removed": [json.loads(x) for x in sorted(pa - ca)],
+    }
+    return out
+
+
+def _render_diff_md(diff: dict) -> list[str]:
+    lines = ["## Diff vs prior analysis", ""]
+    empty = True
+    for section in ("identifications", "field_maps", "anomalies"):
+        d = diff.get(section, {})
+        for kind in ("added", "removed", "changed"):
+            for it in d.get(kind, []):
+                empty = False
+                lines.append(f"- **{section} {kind}**: {json.dumps(it)}")
+    if empty:
+        lines.append("_no changes vs the prior analysis_")
+    lines.append("")
+    return lines
+
+
 def write_analysis(out_dir: str | Path, analysis: dict) -> Path:
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    (out / "analysis.json").write_text(json.dumps(analysis, indent=2, sort_keys=True), encoding="utf-8")
+    json_path = out / "analysis.json"
+    prior = None
+    if json_path.exists():
+        try:
+            prior = json.loads(json_path.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            prior = None
+    diff = diff_analyses(prior, analysis) if prior is not None else None
+
+    json_path.write_text(json.dumps(analysis, indent=2, sort_keys=True), encoding="utf-8")
     lines = ["# SubCensus place analysis", ""]
     for key in REQUIRED_KEYS:
         lines.append(f"## {key.replace('_', ' ').title()}")
         items = analysis.get(key, [])
         lines += [f"- {json.dumps(it) if not isinstance(it, str) else it}" for it in items] or ["_none_"]
         lines.append("")
+    if diff is not None:
+        lines += _render_diff_md(diff)
     (out / "analysis.md").write_text("\n".join(lines), encoding="utf-8")
     return out
 
@@ -115,6 +208,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--model", default="llama3")
     ap.add_argument("--api-key", default=os.environ.get("SUBCENSUS_API_KEY"))
     ap.add_argument("--print-prompt", action="store_true", help="just print the prompt (no model call)")
+    ap.add_argument("--apply", action="store_true",
+                    help="write high-confidence IDs into the global brain (System §8; explicit)")
+    ap.add_argument("--confidence-floor", type=float, default=0.8,
+                    help="min confidence for a proposed/applied label (System §8, default 0.8)")
+    ap.add_argument("--signatures-dir", help="global signatures/ dir to --apply into (System §4)")
     args = ap.parse_args(argv)
 
     bundle = json.loads(Path(args.bundle).read_text(encoding="utf-8"))
@@ -126,7 +224,21 @@ def main(argv: list[str] | None = None) -> int:
     analysis = analyze_bundle(bundle, call)
     out = Path(args.out or Path(args.bundle).parent)
     write_analysis(out, analysis)
-    print(f"wrote {out/'analysis.json'} ({len(proposed_labels(analysis))} proposed labels)")
+    proposed = proposed_labels(analysis, args.confidence_floor)
+    print(f"wrote {out/'analysis.json'} ({len(proposed)} proposed labels >= {args.confidence_floor})")
+
+    if args.apply:
+        if not args.signatures_dir:
+            ap.error("--apply requires --signatures-dir (the global brain to write into)")
+        from subcensus_tools.taxonomy import Taxonomy
+        valid = set(Taxonomy.load().ids())
+        applied = apply_labels(analysis, args.signatures_dir, args.confidence_floor,
+                               valid_classes=valid)
+        for row in applied:
+            print(f"applied: {row['protocol']} -> {row['device_class']} ({row['notes']})")
+        skipped = len(proposed) - len(applied)
+        print(f"applied {len(applied)} label(s) into {Path(args.signatures_dir)/'protocol_map.csv'}"
+              + (f"; skipped {skipped} (empty/off-taxonomy)" if skipped else ""))
     return 0
 
 

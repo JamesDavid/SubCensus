@@ -18,11 +18,17 @@ static void camp_jump_cb(void* context, uint32_t freq_hz) {
     scene_manager_next_scene(app->scene_manager, SubCensusSceneReview);
 }
 
+static uint32_t g_camp_last_hits;
+
 static void camp_timer_cb(void* context) {
     SubCensusApp* app = context;
     CensusHit hits[8];
     size_t n = census_worker_recent_hits(app->worker, hits, 8);
+    uint32_t h = census_worker_hits(app->worker);
+    bool rec = (h != g_camp_last_hits); /* "REC" flash on a fresh capture (§6) */
+    g_camp_last_hits = h;
     census_camp_view_set_low(app->camp_view, census_sd_low(app->storage));
+    census_camp_view_set_status(app->camp_view, census_worker_elapsed_s(app->worker), rec, 0, 0);
     census_camp_view_update(
         app->camp_view,
         app->live_sweep,
@@ -36,10 +42,15 @@ static void camp_timer_cb(void* context) {
 void subcensus_scene_camp_on_enter(void* context) {
     SubCensusApp* app = context;
     app->live_sweep = false;
+    /* per-band watchlist threshold for this freq if present, else Auto/global (§3.2/A2) */
+    float thr = CENSUS_THR_AUTO;
+    if(app->settings.use_watchlist)
+        census_watchlist_threshold(app->storage, app->settings.place_id, app->camp_freq, &thr);
+
     census_camp_view_set_jump_callback(app->camp_view, camp_jump_cb, app);
     census_worker_configure(app->worker, &app->settings, app->settings.place_id);
     census_worker_set_callback(app->worker, camp_worker_cb, app);
-    census_worker_start_camp(app->worker, app->camp_freq);
+    census_worker_start_camp(app->worker, app->camp_freq, thr);
 
     app->live_timer = furi_timer_alloc(camp_timer_cb, FuriTimerTypePeriodic, app);
     furi_timer_start(app->live_timer, 100);

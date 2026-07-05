@@ -84,6 +84,24 @@ def test_parse_candidates():
     assert c[0]["class"] == "remote" and c[0]["source"] == "fingerprint"
 
 
+# what /api/taxonomy serves (mirrors main.cpp iterating census_taxonomy.h); the Review dropdown
+# consumes this instead of a free-text prompt. ids are validated against the SHARED taxonomy.
+TAXONOMY = (
+    '{"classes":[{"id":"weather","name":"Weather / environment sensor"},'
+    '{"id":"remote","name":"Remote control"},{"id":"tpms","name":"Tire pressure sensor"}]}'
+)
+
+
+def test_parse_taxonomy():
+    cls = esp_web.parse_taxonomy(TAXONOMY)
+    assert {c["id"] for c in cls} == {"weather", "remote", "tpms"}
+
+
+def test_parse_taxonomy_rejects_unknown_id():
+    with pytest.raises(ValueError):
+        esp_web.parse_taxonomy('{"classes":[{"id":"not-a-real-class","name":"X"}]}')
+
+
 # what /api/fieldmap serves (mirrors esp_fieldmap_to_json in src/esp_fieldmap.c — the passive
 # differential overlay + named checksum; fields round-trip to shared/core ScField)
 FIELDMAP = (

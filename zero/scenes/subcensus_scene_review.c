@@ -48,17 +48,26 @@ void subcensus_scene_review_on_enter(void* context) {
             if(c == '\n' || li >= sizeof(line) - 1) {
                 line[li] = '\0';
                 if(!header && li > 5) {
-                    char freq[16], match[32], sub[80], label[24];
+                    char ts[24], freq[16], match[32], conf[12], sub[80], label[24];
+                    review_field(line, 0, ts, sizeof(ts));
                     review_field(line, 1, freq, sizeof(freq));
                     review_field(line, 8, match, sizeof(match));
+                    review_field(line, 10, conf, sizeof(conf));
                     review_field(line, 12, sub, sizeof(sub));
                     review_field(line, 13, label, sizeof(label));
                     uint32_t fhz = (uint32_t)strtoul(freq, NULL, 10);
                     char mhz[12];
                     census_freq_format_mhz(fhz, mhz, sizeof(mhz));
                     const char* tag = label[0] ? label : (match[0] ? match : "unknown");
-                    char item[52];
-                    snprintf(item, sizeof(item), "%s %s", mhz, tag);
+                    /* time = HH:MM from the ISO ts (chars 11..15); confidence % from match_conf */
+                    char hhmm[6] = "--:--";
+                    if(strlen(ts) >= 16) memcpy(hhmm, ts + 11, 5);
+                    int cpct = (int)(strtof(conf, NULL) * 100.0f);
+                    char item[64];
+                    if(cpct > 0)
+                        snprintf(item, sizeof(item), "%s %s %s %d%%", hhmm, mhz, tag, cpct);
+                    else
+                        snprintf(item, sizeof(item), "%s %s %s", hhmm, mhz, tag);
                     strncpy(app->review_subs[app->review_count], sub, 79);
                     app->review_subs[app->review_count][79] = '\0';
                     app->review_freqs[app->review_count] = fhz;

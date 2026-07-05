@@ -50,6 +50,7 @@ struct CensusRecon {
     uint32_t grid[CENSUS_RECON_MAX_BINS];
     size_t grid_n;
     ScOccupancyAccum accum[CENSUS_RECON_MAX_BINS];
+    volatile size_t sniff_edges; /* edge count during a Stage B modulation sniff (§3.3 Stage B) */
 
     volatile uint32_t current_freq;
     volatile uint32_t hot_bins;
@@ -201,6 +202,41 @@ static bool freq_in(const uint32_t* list, size_t n, uint32_t f) {
     return false;
 }
 
+/* Stage B edge counter (interrupt context — keep minimal). */
+static void recon_sniff_cb(bool level, uint32_t duration, void* context) {
+    CensusRecon* r = context;
+    (void)level;
+    (void)duration;
+    r->sniff_edges++;
+}
+
+/* Stage B modulation sniff (§3.3): capture short windows under OOK and 2-FSK on `freq` and keep
+ * whichever yields more pulse structure — that resolves modulation, which RSSI alone can't. The
+ * dual-preset compare is real; the live capture needs a real signal (TODO(hw)), so with no
+ * airtime both windows read empty and it defaults to OOK. Requires the device to be begun. */
+static const char* recon_sniff_modulation(CensusRecon* r, uint32_t freq) {
+    static const FuriHalSubGhzPreset presets[2] = {
+        FuriHalSubGhzPresetOok650Async, FuriHalSubGhzPreset2FSKDev476Async};
+    static const char* const names[2] = {"OOK", "2FSK"};
+    size_t best = 0;
+    int bi = 0;
+    for(int p = 0; p < 2; p++) {
+        subghz_devices_idle(r->device);
+        subghz_devices_set_frequency(r->device, freq);
+        subghz_devices_load_preset(r->device, presets[p], NULL);
+        r->sniff_edges = 0;
+        subghz_devices_start_async_rx(r->device, recon_sniff_cb, r);
+        furi_delay_ms(150); /* short refine window (TODO(hw): needs a live signal) */
+        subghz_devices_stop_async_rx(r->device);
+        subghz_devices_idle(r->device);
+        if(r->sniff_edges > best) {
+            best = r->sniff_edges;
+            bi = p;
+        }
+    }
+    return names[bi];
+}
+
 static void recon_write_csvs(CensusRecon* r, ScOccupancyBin* bins, size_t n) {
     char ts[32];
     recon_iso_now(ts, sizeof(ts));
@@ -246,12 +282,14 @@ static void recon_write_csvs(CensusRecon* r, ScOccupancyBin* bins, size_t n) {
             uint32_t freq = (uint32_t)wl[i].freq_hz;
             if(freq_in(excluded, nx, freq)) continue; /* excluded: omit (§9) */
             const char* src = freq_in(pinned, np, freq) ? "user-pin" : "recon";
+            const char* mod = recon_sniff_modulation(r, freq); /* Stage B resolve (§3.3) */
             char row[128];
             int len = snprintf(
                 row,
                 sizeof(row),
-                "%ld,OOK,%.1f,%.4f,%s\n",
+                "%ld,%s,%.1f,%.4f,%s\n",
                 (long)wl[i].freq_hz,
+                mod,
                 (double)wl[i].threshold_dbm,
                 (double)wl[i].occupancy,
                 src);
@@ -310,10 +348,8 @@ static int32_t census_recon_thread(void* context) {
         if(r->progress) r->progress(r->progress_ctx);
     }
 
-    subghz_devices_idle(r->device);
-    subghz_devices_end(r->device);
-
-    /* finalize + emit artifacts */
+    /* finalize + emit artifacts (Stage B modulation sniff in recon_write_csvs needs the device
+     * still begun, so do this BEFORE ending it). */
     ScOccupancyBin* bins = malloc(sizeof(ScOccupancyBin) * r->grid_n);
     if(bins) {
         for(size_t i = 0; i < r->grid_n; i++)
@@ -322,6 +358,9 @@ static int32_t census_recon_thread(void* context) {
         recon_write_csvs(r, bins, r->grid_n);
         free(bins);
     }
+
+    subghz_devices_idle(r->device);
+    subghz_devices_end(r->device);
     FURI_LOG_I(
         "SubCensus",
         "SC scene=recon action=done bins=%u passes=%lu",

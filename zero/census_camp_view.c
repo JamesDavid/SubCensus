@@ -15,6 +15,9 @@ typedef struct {
     size_t recent_len;
     size_t sel; /* selected row in the recent-hits list */
     bool sd_low; /* SD full banner (§6.1) */
+    uint32_t elapsed_s; /* elapsed monitor time (§6) */
+    bool rec; /* "REC" overlay just after a capture (§6) */
+    uint8_t pos, count; /* sweep position in the list (§6 cursor); count 0 = camp */
 } CensusCampModel;
 
 struct CensusCampView {
@@ -73,27 +76,43 @@ static void census_camp_draw(Canvas* canvas, void* model) {
     canvas_set_font(canvas, FontPrimary);
     canvas_draw_str(canvas, 2, 11, m->sweep ? "SWEEP" : "CAMP");
     census_freq_mhz(m->freq_hz, buf, sizeof(buf));
-    char freq_line[40];
-    snprintf(freq_line, sizeof(freq_line), "%s MHz", buf);
+    char freq_line[56];
+    /* sweep: cursor shows the active freq's position in the list (§6) */
+    if(m->sweep && m->count)
+        snprintf(freq_line, sizeof(freq_line), "%s MHz %u/%u", buf, m->pos, m->count);
+    else
+        snprintf(freq_line, sizeof(freq_line), "%s MHz", buf);
     canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str(canvas, 52, 11, freq_line);
+    canvas_draw_str(canvas, 44, 11, freq_line);
+
+    /* "● REC" overlay during a capture window (§6) */
+    if(m->rec) {
+        canvas_draw_disc(canvas, 122, 8, 3);
+        canvas_draw_str(canvas, 104, 11, "REC");
+    }
 
     /* RSSI bar: map -100..-40 dBm to 0..124 px */
     int pct = (int)((m->rssi + 100.0f) * 124.0f / 60.0f);
     if(pct < 0) pct = 0;
     if(pct > 124) pct = 124;
-    canvas_draw_frame(canvas, 2, 20, 124, 10);
-    canvas_draw_box(canvas, 3, 21, pct, 8);
+    canvas_draw_frame(canvas, 2, 18, 124, 9);
+    canvas_draw_box(canvas, 3, 19, pct, 7);
     snprintf(buf, sizeof(buf), "RSSI %d dBm", (int)m->rssi);
-    canvas_draw_str(canvas, 2, 42, buf);
+    canvas_draw_str(canvas, 2, 37, buf);
+    snprintf(buf, sizeof(buf), "%lus", (unsigned long)m->elapsed_s);
+    canvas_draw_str(canvas, 92, 37, buf);
+
+    /* last match/unknown tag (§6) */
+    snprintf(buf, sizeof(buf), "Last: %s", m->recent_len ? m->recent[0].match : "-");
+    canvas_draw_str(canvas, 2, 47, buf);
 
     snprintf(buf, sizeof(buf), "Hits: %lu", (unsigned long)m->hits);
-    canvas_draw_str(canvas, 2, 54, buf);
-    canvas_draw_str(canvas, 70, 54, "OK: hits");
+    canvas_draw_str(canvas, 2, 57, buf);
+    canvas_draw_str(canvas, 70, 57, "OK: hits");
     if(m->sd_low)
-        canvas_draw_str(canvas, 2, 63, "SD LOW: blips only");
+        canvas_draw_str(canvas, 2, 64, "SD LOW: blips only");
     else
-        canvas_draw_str(canvas, 2, 63, "Back: stop");
+        canvas_draw_str(canvas, 2, 64, "Back: stop");
 }
 
 static bool census_camp_input(InputEvent* event, void* context) {
@@ -199,6 +218,24 @@ void census_camp_view_set_jump_callback(
 
 void census_camp_view_set_low(CensusCampView* v, bool low) {
     with_view_model(v->view, CensusCampModel * m, { m->sd_low = low; }, true);
+}
+
+void census_camp_view_set_status(
+    CensusCampView* v,
+    uint32_t elapsed_s,
+    bool rec,
+    uint8_t pos,
+    uint8_t count) {
+    with_view_model(
+        v->view,
+        CensusCampModel * m,
+        {
+            m->elapsed_s = elapsed_s;
+            m->rec = rec;
+            m->pos = pos;
+            m->count = count;
+        },
+        true);
 }
 
 void census_camp_view_update(

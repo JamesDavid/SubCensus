@@ -124,37 +124,90 @@
       ws.onclose = () => setTimeout(connectWs, 2000);
     }
 
+    // Taxonomy (System §5) backs the label dropdown — no more free-text device_class.
+    let TAXONOMY = [];
+    function loadTaxonomy() { return api('/api/taxonomy').then(j => { TAXONOMY = j.classes || []; }); }
+    function taxSelect() {
+      return '<select class="lblcls">' +
+        TAXONOMY.map(c => '<option value="' + c.id + '">' + c.name + '</option>').join('') + '</select>';
+    }
+
     function loadReview() {
+      if (!TAXONOMY.length) { loadTaxonomy().then(loadReview); return; }
       csv('/api/captures').then(rows => {
         const b = $('#reviewbody'); b.innerHTML = '';
         rows.slice(1).reverse().forEach(r => {
+          const sub = r[12];
           const tr = document.createElement('tr');
           tr.innerHTML = '<td>' + r[0] + '</td><td>' + (r[1] / 1e6).toFixed(2) + '</td><td>' + r[2] +
             '</td><td>' + (r[8] || '—') + ' ' + (r[10] || '') + '</td>' +
-            '<td><button class="act" onclick="label(\'' + r[12] + '\')">label</button></td>';
+            '<td><button class="act" onclick="showCandidates(\'' + sub + '\',this)">candidates</button> ' +
+            taxSelect() +
+            ' <button class="act" onclick="labelSub(\'' + sub + '\',this)">label</button>' +
+            '<div class="cands"></div></td>';
           b.appendChild(tr);
         });
       });
     }
 
-    function label(sub) {
-      const cls = prompt('device_class (e.g. weather, remote, tpms):');
-      if (!cls) return;
+    // Top-N k-NN candidates (System §6) for a capture — confidence + source, each acceptable
+    // into the class dropdown. Advisory only; the user confirms (System §6, §7b).
+    function showCandidates(sub, btn) {
+      const box = btn.parentNode.querySelector('.cands');
+      box.textContent = 'loading…';
+      fetch('/api/candidates?sub=' + encodeURIComponent(sub)).then(r => r.json()).then(j => {
+        const cs = j.candidates || [];
+        if (!cs.length) { box.textContent = 'no candidates'; return; }
+        box.innerHTML = cs.map(c =>
+          '<div class="row">' + (c.name || '?') + ' <code>' + c.class + '</code> ' +
+          Math.round(c.confidence * 100) + '% · ' + c.source +
+          ' <button class="act" onclick="accept(this,\'' + c.class + '\')">accept</button></div>').join('');
+      }).catch(() => box.textContent = 'error');
+    }
+    function accept(btn, cls) {
+      const sel = btn.closest('td').querySelector('.lblcls');
+      if (sel) sel.value = cls;
+    }
+    function labelSub(sub, btn) {
+      const cls = btn.closest('td').querySelector('.lblcls').value;
       const fd = new FormData(); fd.append('sub', sub); fd.append('device_class', cls);
       api('/api/label', { method: 'POST', body: fd }).then(() => loadReview());
     }
 
     function loadBands() {
-      csv('/api/occupancy').then(rows => renderTable('#occ', rows));
-      csv('/api/watchlist').then(rows => renderTable('#wl', rows));
+      csv('/api/occupancy').then(rows => renderTable('#occ', rows, true));
+      csv('/api/watchlist').then(rows => renderTable('#wl', rows, true));
     }
-    function renderTable(sel, rows) {
+    // rows[0] is the header; col 0 is freq_hz. With actions, each data row gets pin/exclude/
+    // camp-here controls wired to that freq (Esp §5 Bands; System §9 user pins survive Reset).
+    function renderTable(sel, rows, actions) {
       const t = $(sel); t.innerHTML = '';
       rows.forEach((r, i) => {
         const tr = document.createElement('tr');
-        tr.innerHTML = r.map(c => (i ? '<td>' : '<th>') + c + (i ? '</td>' : '</th>')).join('');
+        let html = r.map(c => (i ? '<td>' : '<th>') + c + (i ? '</td>' : '</th>')).join('');
+        if (actions) {
+          if (i === 0) html += '<th>actions</th>';
+          else {
+            const f = r[0];
+            html += '<td>' +
+              '<button class="act" onclick="watchAction(' + f + ',\'pin\')">pin</button> ' +
+              '<button class="act warn" onclick="watchAction(' + f + ',\'exclude\')">exclude</button> ' +
+              '<button class="act" onclick="watchAction(' + f + ',\'clear\')">clear</button> ' +
+              '<button class="act" onclick="campHere(' + f + ')">camp here</button></td>';
+          }
+        }
+        tr.innerHTML = html;
         t.appendChild(tr);
       });
+    }
+    function watchAction(freq, action) {
+      const fd = new FormData(); fd.append('freq', freq); fd.append('action', action);
+      api('/api/watchlist', { method: 'POST', body: fd }).then(loadBands);
+    }
+    function campHere(freq) {
+      const fd = new FormData(); fd.append('start', '1'); fd.append('freq', freq);
+      api('/api/camp', { method: 'POST', body: fd })
+        .then(j => alert('camping @ ' + (j.freq_hz / 1e6).toFixed(2) + ' MHz'));
     }
     function recon(action, mode) {
       const fd = new FormData(); fd.append('action', action); if (mode) fd.append('mode', mode);
@@ -163,9 +216,12 @@
 
     function loadPlaces() {
       api('/api/places').then(j => {
+        const many = j.places.length > 1;
         $('#placelist').innerHTML = j.places.map(p =>
           '<div class="row">' + (p.active ? '★ ' : '') + p.name + ' <code>' + p.id + '</code> ' +
-          (p.active ? '' : '<button class="act" onclick="switchPlace(\'' + p.id + '\')">use</button>') +
+          (p.active ? '' : '<button class="act" onclick="switchPlace(\'' + p.id + '\')">use</button> ') +
+          '<button class="act" onclick="renamePlace(\'' + p.id + '\')">rename</button> ' +
+          (many ? '<button class="act warn" onclick="deletePlace(\'' + p.id + '\')">delete</button>' : '') +
           '</div>').join('');
       });
     }
@@ -176,6 +232,14 @@
     }
     function createPlace() { const n = $('#newplace').value; if (n) place('create', { name: n }).then(() => { status(); loadPlaces(); }); }
     function switchPlace(id) { place('switch', { id }).then(() => { status(); loadPlaces(); }); }
+    function renamePlace(id) {
+      const n = prompt('New place name:'); if (!n) return;
+      place('rename', { id, name: n }).then(() => { status(); loadPlaces(); });
+    }
+    function deletePlace(id) {
+      if (!confirm('Delete place ' + id + '? Its captures + logs go with it.')) return;
+      place('delete', { id }).then(() => { status(); loadPlaces(); });
+    }
 
     // --- Field-map discovery / edit (System §7b) ---
     const FM_CLASSES = ['static', 'slow', 'counter', 'checksum', 'data'];
@@ -245,6 +309,7 @@
       ['tx_enabled', 'TX enabled', 'bool'],
       ['wifi_ssid', 'WiFi SSID', 'text'], ['wifi_pass', 'WiFi password', 'pass'],
       ['mqtt_enabled', 'MQTT enabled', 'bool'], ['mqtt_host', 'MQTT host', 'text'],
+      ['mqtt_port', 'MQTT port', 'num'],
     ];
     function loadSettings() {
       api('/api/settings').then(j => {

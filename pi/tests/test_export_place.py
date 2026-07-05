@@ -78,3 +78,91 @@ def test_analyze_round_trip_with_fake_model(db, tmp_path):
     out = write_analysis(tmp_path / "home", analysis)
     assert (out / "analysis.json").exists() and (out / "analysis.md").exists()
     assert "Coverage Gaps" in (out / "analysis.md").read_text(encoding="utf-8")
+
+
+# --- S-A3: §7b differential + checksum guess folded into the needs-ID payload ---
+
+def test_needs_id_field_discovery(tmp_path, fixtures_dir):
+    d = Database(tmp_path / "fm.db")
+    Collector(d, place="home").process_stream(
+        replay_file(fixtures_dir / "rtl433" / "fieldmap_corpus.jsonl"))
+    bundle = build_bundle(d, "home")
+    raw = next(e for e in bundle["devices"]["needs_id"] if e["model"] == "RawSensor")
+    fd = raw["field_discovery"]
+    assert fd["n_frames"] == 8 and fd["n_bytes"] == 4
+    assert [s["class"] for s in fd["segments"]] == ["static", "counter", "slow", "checksum"]
+    assert fd["checksum"]["kind"] == "xor"
+
+
+# --- S-A5: occupancy coverage gaps in the digest ---
+
+def test_occupancy_coverage_gaps(db, tmp_path):
+    occ = tmp_path / "occupancy.csv"
+    occ.write_text(
+        "freq_hz,noise_floor,peak_rssi,occupancy,crossings,last_seen\n"
+        "433920000,-97.0,-60.0,0.80,9,2026-07-04T12:03:00\n"
+        "315000000,-98.0,-70.0,0.20,2,2026-07-04T12:03:00\n",
+        encoding="utf-8", newline="")
+    bundle = build_bundle(db, "home", occupancy_csv=occ)
+    gaps = bundle["occupancy_digest"]["coverage_gaps"]
+    assert any(g["type"] == "unmonitored-span" for g in gaps)
+    bands = {g.get("band") for g in gaps if g["type"] == "band-no-occupancy"}
+    assert {"868 MHz", "915 MHz"} <= bands
+
+
+# --- S-A1: --apply write-back into the global brain ---
+
+def test_apply_labels_writes_protocol_map(tmp_path):
+    from subcensuspi.analyze_place import apply_labels
+    from subcensus_tools.schema import load_all_schemas, validate_csv
+    from subcensus_tools.taxonomy import Taxonomy
+
+    sig = tmp_path / "signatures"
+    analysis = {"identifications": [
+        {"signature": "Acurite-Tower", "candidate": "weather", "confidence": 0.9},
+        {"signature": "Guessy", "candidate": "tpms", "confidence": 0.4},         # below floor
+        {"signature": "Bogus", "candidate": "not-a-class", "confidence": 0.99},  # off-taxonomy
+    ]}
+    applied = apply_labels(analysis, sig, 0.8, valid_classes={"weather", "tpms"})
+    assert [(a["protocol"], a["device_class"]) for a in applied] == [("Acurite-Tower", "weather")]
+    pm = sig / "protocol_map.csv"
+    assert pm.exists()
+    # the write is schema-valid (shared/schema/protocol_map, System §10)
+    errs = validate_csv(load_all_schemas()["protocol_map"], pm, Taxonomy.load())
+    assert errs == []
+
+
+def test_apply_labels_idempotent_and_updates(tmp_path):
+    from subcensuspi.analyze_place import apply_labels
+    sig = tmp_path / "sig"
+    apply_labels({"identifications": [{"signature": "P", "candidate": "weather", "confidence": 0.9}]},
+                 sig, 0.8)
+    # re-apply with a corrected class -> updates in place, no duplicate rows
+    apply_labels({"identifications": [{"signature": "P", "candidate": "remote", "confidence": 0.9}]},
+                 sig, 0.8)
+    import csv
+    with (sig / "protocol_map.csv").open(encoding="utf-8") as fh:
+        rows = list(csv.DictReader(fh))
+    assert len(rows) == 1 and rows[0]["device_class"] == "remote"
+
+
+# --- S-A4: re-runnable, diffs vs the prior analysis ---
+
+def test_diff_vs_prior_analysis(tmp_path):
+    from subcensuspi.analyze_place import diff_analyses
+
+    prev = {"identifications": [{"signature": "X", "candidate": "weather", "confidence": 0.9}],
+            "anomalies": ["old"]}
+    curr = {"identifications": [{"signature": "X", "candidate": "remote", "confidence": 0.9},
+                                {"signature": "Y", "candidate": "tpms", "confidence": 0.8}],
+            "anomalies": ["new"]}
+    d = diff_analyses(prev, curr)
+    assert [i["signature"] for i in d["identifications"]["added"]] == ["Y"]
+    assert [c["signature"] for c in d["identifications"]["changed"]] == ["X"]
+    assert d["anomalies"]["added"] == ["new"] and d["anomalies"]["removed"] == ["old"]
+
+    out = tmp_path / "place"
+    write_analysis(out, prev)
+    write_analysis(out, curr)
+    md = (out / "analysis.md").read_text(encoding="utf-8")
+    assert "Diff vs prior analysis" in md and "identifications changed" in md

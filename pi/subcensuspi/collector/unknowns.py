@@ -16,6 +16,22 @@ from pathlib import Path
 from ..dsp import feature, pulse
 
 
+def place_iq_dir(places_dir: str | Path, place: str) -> Path:
+    """Per-place captured-IQ directory (§9a): ``places_dir/<place>/iq``."""
+    return Path(places_dir) / place / "iq"
+
+
+def iq_path_for(places_dir: str | Path, place: str, freq_hz: int, ts: str = "") -> Path:
+    """Derive the place-scoped ``.cu8`` path for a captured unknown burst (§9a).
+
+    Path derivation only — the actual IQ file WRITE is a live rtl_433 concern (TODO(hw)); this
+    is what the collector records in ``unknowns.iq_path`` so the dashboard can find the snippet.
+    """
+    stamp = ts.replace(":", "").replace("-", "").replace("T", "_") if ts else ""
+    name = f"unk_{freq_hz}{('_' + stamp) if stamp else ''}.cu8"
+    return place_iq_dir(places_dir, place) / name
+
+
 def dir_size_bytes(path: str | Path) -> int:
     p = Path(path)
     if not p.exists():

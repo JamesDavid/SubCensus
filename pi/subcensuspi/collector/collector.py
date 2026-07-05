@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from ..db import Database
+from ..mqtt import MqttPublisher
 from .parser import parse_line
 from .unknowns import disk_guard_ok, pulse_summary_from_event
 
@@ -35,12 +36,15 @@ class Collector:
         capture_unknowns: bool = False,
         iq_dir: str = "",
         max_iq_gb: float = 20,
+        mqtt: MqttPublisher | None = None,
     ):
         self.db = db
         self.place = place
         self.capture_unknowns = capture_unknowns
         self.iq_dir = iq_dir
         self.max_iq_gb = max_iq_gb
+        self.mqtt = mqtt
+        self._mqtt_announced: set[str] = set()  # devices whose HA discovery config was sent
         self.stats = CollectorStats()
 
     def process_line(self, line: str, source: str = "") -> str | None:
@@ -54,6 +58,7 @@ class Collector:
                 "SC event=decoded model=%s id=%s freq=%d rssi=%s device=%s",
                 r.model, r.dev_id, r.freq_hz, r.rssi, did,
             )
+            self._publish_mqtt(did, r)
             return did
         # non-decoded line: an unknown-capture trigger, or a stats/protocol line we ignore
         if self.capture_unknowns:
@@ -79,6 +84,25 @@ class Collector:
                 return None
         self.stats.skipped += 1
         return None
+
+    def _publish_mqtt(self, device_id: str, reception) -> None:
+        """Republish a decoded reception to Home Assistant via MQTT discovery (Pi §9).
+
+        Discovery config is published once per device (retained); state is published every
+        reception. The device row (rolled-up first/last-seen, count, avg_snr, label) is the
+        source of truth for the HA entity. The publisher is injectable, so a fake broker
+        exercises this whole path with no mosquitto; only the socket connect needs a live
+        broker (TODO(hw))."""
+        if self.mqtt is None:
+            return
+        row = self.db.get_device(device_id)
+        if row is None:
+            return
+        device = dict(row)
+        if device_id not in self._mqtt_announced:
+            self.mqtt.publish_discovery(device)
+            self._mqtt_announced.add(device_id)
+        self.mqtt.publish_state(device, {"rssi": reception.rssi})
 
     def process_stream(self, lines: Iterable[str], source: str = "") -> CollectorStats:
         for line in lines:

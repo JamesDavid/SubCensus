@@ -14,7 +14,8 @@
 enum {
     DetailLabel = 0,
     DetailReplay = 1,
-    DetailEdit = 2
+    DetailEdit = 2,
+    DetailInfo = 100 /* non-actionable info rows (metadata + extra candidates) */
 };
 
 static void detail_cb(void* context, uint32_t index) {
@@ -47,11 +48,24 @@ void subcensus_scene_review_detail_on_enter(void* context) {
     uint32_t freq = meta.frequency ? (uint32_t)meta.frequency : app->review_freqs[app->review_sel];
     sc_feature_compute(timings, tn, (int32_t)freq, SC_MOD_OOK, &app->review_fv);
 
-    /* classify: gated k-NN against the global brain (System §6) */
+    /* metadata line (§6): preset + edge count from the .sub */
+    char meta_line[96];
+    snprintf(
+        meta_line,
+        sizeof(meta_line),
+        "%s  %u edges",
+        meta.preset[0] ? meta.preset : "?",
+        (unsigned)tn);
+
+    /* classify: gated k-NN against the global brain (System §6) -> top-N candidates + source */
     CensusBrain* brain = malloc(sizeof(CensusBrain));
     char header[52];
+    char cand_lines[3][44];
+    size_t cand_n = 0;
     char mhz[12];
     census_freq_format_mhz(freq, mhz, sizeof(mhz));
+    app->review_cand_class[0] = '\0';
+    app->review_cand_name[0] = '\0';
     if(brain) {
         census_brain_load(app->storage, brain);
         ScKnnQuery q;
@@ -60,18 +74,24 @@ void subcensus_scene_review_detail_on_enter(void* context) {
         q.cadence_class = SC_CADENCE_NONE;
         ScKnnMatch m[3];
         size_t k = sc_knn_match(&q, brain->fps, brain->count, m, 3);
-        app->review_cand_class[0] = '\0';
-        app->review_cand_name[0] = '\0';
         if(k > 0) {
             int idx = m[0].index;
             const char* dn = brain->fps[idx].device_name ? brain->fps[idx].device_name : "?";
-            snprintf(header, sizeof(header), "%s %s %d%%", mhz, dn, (int)(m[0].confidence * 100));
-            /* remember the candidate so the label picker can offer Accept (§6) */
+            /* top candidate in the header, with confidence + source (fingerprint) */
+            snprintf(
+                header, sizeof(header), "%s %s %d%% fp", mhz, dn, (int)(m[0].confidence * 100));
             const char* cls = census_class_id(brain->fps[idx].device_class);
             strncpy(app->review_cand_class, cls, sizeof(app->review_cand_class) - 1);
             app->review_cand_class[sizeof(app->review_cand_class) - 1] = '\0';
             strncpy(app->review_cand_name, dn, sizeof(app->review_cand_name) - 1);
             app->review_cand_name[sizeof(app->review_cand_name) - 1] = '\0';
+            /* the remaining candidates (2..N) as info rows with confidence + source */
+            for(size_t i = 1; i < k && cand_n < 3; i++) {
+                const char* nm =
+                    brain->fps[m[i].index].device_name ? brain->fps[m[i].index].device_name : "?";
+                snprintf(
+                    cand_lines[cand_n++], 44, "  %s %d%% fp", nm, (int)(m[i].confidence * 100));
+            }
         } else {
             snprintf(header, sizeof(header), "%s unknown", mhz);
         }
@@ -83,6 +103,10 @@ void subcensus_scene_review_detail_on_enter(void* context) {
     Submenu* menu = app->submenu;
     submenu_reset(menu);
     submenu_set_header(menu, header);
+    /* metadata + extra candidates as non-actionable info rows (indices >= DetailInfo) */
+    submenu_add_item(menu, meta_line, DetailInfo, detail_cb, app);
+    for(size_t i = 0; i < cand_n; i++)
+        submenu_add_item(menu, cand_lines[i], DetailInfo + 1 + (uint32_t)i, detail_cb, app);
     submenu_add_item(menu, "Label device", DetailLabel, detail_cb, app);
     submenu_add_item(menu, "Replay to identify", DetailReplay, detail_cb, app);
     submenu_add_item(menu, "Edit / analyze", DetailEdit, detail_cb, app);
@@ -99,6 +123,7 @@ bool subcensus_scene_review_detail_on_event(void* context, SceneManagerEvent eve
     if(event.event == DetailReplay) {
         /* Replay-to-identify -> the confirm-gated TX flow (§6, No defaulted). */
         app->edit_from_tx = false; /* replay the stored .sub, not an edited frame */
+        app->replay_repeat = 1; /* once by default; the confirm lets you pick up to 10 (§6) */
         scene_manager_next_scene(app->scene_manager, SubCensusSceneReplayConfirm);
         return true;
     }

@@ -1,0 +1,23 @@
+[Unit]
+# SubCensusPi collector (Pi §9): owns rtl_433, writes the SQLite catalog + captures unknowns,
+# and republishes to Home Assistant over MQTT. RX-only — no transmit.
+Description=SubCensusPi collector (rtl_433 -> SQLite catalog + MQTT/HA)
+Documentation=https://github.com/JamesDavid/SubCensus
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adjust these three lines to your install (defaults match pi/install.sh: $HOME/SubCensus).
+User=pi
+WorkingDirectory=/home/pi/SubCensus/pi
+ExecStart=/home/pi/SubCensus/pi/.venv/bin/python -m subcensuspi.collector.main --config /home/pi/SubCensus/pi/config.yaml
+# Restart=always is the process-level safety net. Per-dongle rtl_433 relaunch (Pi §9) is handled
+# INSIDE the collector (supervise_stream, backoff) so one dead dongle never restarts the others.
+Restart=always
+RestartSec=3
+# rtl_433 needs USB (SDR) access; leave the DB/IQ dirs writable to the service user.
+StateDirectory=subcensuspi
+
+[Install]
+WantedBy=multi-user.target

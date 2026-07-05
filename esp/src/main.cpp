@@ -24,6 +24,8 @@ extern "C" {
 #include "census_schema.h"
 #include "esp_capture.h"
 #include "census_taxonomy.h"
+#include "esp_catalog.h"
+#include "esp_cc1101_regs.h"
 #include "esp_census_log.h"
 #include "esp_fieldmap.h"
 #include "esp_fingerprints.h"
@@ -61,6 +63,13 @@ static SPIClass g_vspi(VSPI);
 static bool g_cc1101_present = false;
 static uint8_t g_cc1101_version = 0;
 static volatile bool g_camp_running = false;
+static volatile int32_t g_camp_freq = 0; // Camp target (Esp §5, System §9); 0 = unset
+// Per-device running cadence + derived catalog record (Esp §3, System §7a). Compact RAM
+// estimators keyed by waveform signature — the always-on ESP is a strong cadence measurer.
+// Heap-allocated (the ~11 KB table lives in DRAM heap, not the static .bss segment).
+static EspCatalog* g_catalog = nullptr;
+// Confidence at/above which an identified device gets its own HA discovery entity (Esp §6).
+static constexpr float MQTT_IDENTIFY_CONF = 0.5f;
 static WiFiClient g_wifi_client;
 static PubSubClient g_mqtt(g_wifi_client);
 static const char* MQTT_BASE = "subcensusesp";
@@ -100,6 +109,61 @@ static float cc1101_rssi_dbm() {
     return (float)(r / 2) - 74.0f; // rssi_offset ~74 dB
 }
 
+// --- CC1101 preset config + carrier tuning (Esp §2/§3). The register tables + tuning math are
+// hardware-independent (esp_cc1101_regs, mirroring the stock Flipper presets); the SPI writes
+// below run on-device but only a real radio proves reception — on-device RX validation is
+// TODO(hw). ---
+
+static void cc1101_write_reg(uint8_t addr, uint8_t val) {
+    g_vspi.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
+    digitalWrite(PIN_CS, LOW);
+    g_vspi.transfer(addr & 0x3F); // single write (no burst/read bits)
+    g_vspi.transfer(val);
+    digitalWrite(PIN_CS, HIGH);
+    g_vspi.endTransaction();
+}
+
+static void cc1101_write_burst(uint8_t addr, const uint8_t* data, size_t n) {
+    g_vspi.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
+    digitalWrite(PIN_CS, LOW);
+    g_vspi.transfer((addr & 0x3F) | 0x40); // burst write
+    for(size_t i = 0; i < n; i++) g_vspi.transfer(data[i]);
+    digitalWrite(PIN_CS, HIGH);
+    g_vspi.endTransaction();
+}
+
+// Map the capture preset (settings) to the CC1101 register preset (Esp §3). Dual falls back to
+// the wideband OOK650 preset for the survey pass.
+static EspCc1101Preset cc1101_preset_for(uint8_t capture_preset) {
+    switch(capture_preset) {
+    case EspCaptureOok650: return ESP_CC1101_PRESET_OOK650;
+    case EspCaptureOok270: return ESP_CC1101_PRESET_OOK270;
+    case EspCaptureFsk: return ESP_CC1101_PRESET_2FSK;
+    default: return ESP_CC1101_PRESET_OOK650;
+    }
+}
+
+// Push a preset's register table + PATABLE into the radio (Esp §3). Safe (config only, never TX).
+static void cc1101_configure(uint8_t capture_preset) {
+    EspCc1101Preset p = cc1101_preset_for(capture_preset);
+    size_t nregs = 0;
+    const EspCc1101Reg* regs = esp_cc1101_preset_regs(p, &nregs);
+    if(!g_cc1101_present || !regs) return; // no radio -> tables still exist, writes are a no-op
+    for(size_t i = 0; i < nregs; i++) cc1101_write_reg(regs[i].addr, regs[i].value);
+    cc1101_write_burst(0x3E, esp_cc1101_preset_patable(p), ESP_CC1101_PATABLE_LEN); // 0x3E PATABLE
+}
+
+// Tune the carrier via the FREQ2/1/0 registers (esp_cc1101_freq_regs). TODO(hw): a real strobe
+// (SIDLE->SRX) and antenna prove the tune received anything.
+static void cc1101_tune(int32_t freq_hz) {
+    uint8_t f2, f1, f0;
+    esp_cc1101_freq_regs(freq_hz, &f2, &f1, &f0);
+    if(!g_cc1101_present) return;
+    cc1101_write_reg(CC1101_FREQ2, f2);
+    cc1101_write_reg(CC1101_FREQ1, f1);
+    cc1101_write_reg(CC1101_FREQ0, f0);
+}
+
 // --- time ---
 
 static void iso_now(char* out, size_t cap) {
@@ -125,6 +189,8 @@ static void append_line(const char* path, const char* line) {
 static void place_meta_path(const char* id, char* out, size_t cap);
 static void place_meta_write(const char* id, const char* name);
 static void mqtt_publish_capture(int32_t freq, float rssi, const char* match);
+static void mqtt_publish_device_discovery(int32_t freq, const char* cls, const char* name, float rssi);
+static void write_catalog();
 
 static void load_settings() {
     esp_settings_defaults(&g_settings);
@@ -182,7 +248,8 @@ static String settings_json() {
     // WiFi/MQTT config surfaced for the Settings UI (Esp §5); the password is write-only (never
     // echoed back).
     s += "\"wifi_ssid\":\"" + String(g_settings.wifi_ssid) + "\",";
-    s += "\"mqtt_host\":\"" + String(g_settings.mqtt_host) + "\"";
+    s += "\"mqtt_host\":\"" + String(g_settings.mqtt_host) + "\",";
+    s += "\"mqtt_port\":" + String(g_settings.mqtt_port);
     s += "}";
     return s;
 }
@@ -315,12 +382,17 @@ static void load_fingerprints() {
 }
 
 // Returns true if a candidate was found (advisory only — never auto-relabels, System §6).
-static bool classify(const ScFeatureVector* fv, const char** name, const char** cls, float* conf) {
+// The running per-device cadence estimate (System §7a) is passed in as a SOFT booster/penalty
+// (never a gate) — the always-on ESP actually has a cadence to offer (unlike a single capture).
+static bool classify(
+    const ScFeatureVector* fv, ScCadenceClass cadence_class, float period_s, const char** name,
+    const char** cls, float* conf) {
     if(g_fp_count == 0 || !g_settings.match_db) return false;
     ScKnnQuery q;
     memset(&q, 0, sizeof(q));
     q.fv = *fv;
-    q.cadence_class = SC_CADENCE_NONE; // walk-around/single capture: cadence is a soft booster
+    q.cadence_class = cadence_class;
+    q.period_s = period_s;
     ScKnnMatch m[3];
     size_t k = sc_knn_match(&q, g_fps, g_fp_count, m, 3);
     if(k == 0) return false;
@@ -377,11 +449,24 @@ static void process_capture(
         }
     }
 
+    // Update this device's running cadence estimator (System §7a) BEFORE classifying, so the
+    // cadence can feed the k-NN query as a soft booster. Keyed by waveform signature; the derived
+    // catalog record (with cadence_*) is flushed below.
+    ScCadenceEstimate cad;
+    memset(&cad, 0, sizeof(cad));
+    cad.cls = SC_CADENCE_NONE;
+    int cat_slot = g_catalog ? esp_catalog_observe(g_catalog, &fv, freq_hz,
+                                                    (int64_t)time(nullptr), ts, &cad)
+                             : -1;
+
     // classify via gated k-NN against the brain (System §6) — advisory, never auto-relabels
     const char* mname = "";
     const char* mclass = "";
     float mconf = 0.0f;
-    bool matched = classify(&fv, &mname, &mclass, &mconf);
+    bool matched = classify(&fv, cad.cls, cad.period_s, &mname, &mclass, &mconf);
+    if(g_catalog)
+        esp_catalog_set_match(g_catalog, cat_slot, matched ? mname : "", matched ? mclass : "",
+                              matched ? mconf : 0.0f, matched ? "fingerprint" : "");
 
     // census_log row
     EspCensusRow row = {};
@@ -415,8 +500,29 @@ static void process_capture(
              matched ? mname : "", matched ? mclass : "", (double)(matched ? mconf : 0.0f), source);
     g_ws.textAll(msg);
     mqtt_publish_capture(freq_hz, rssi, matched ? mname : "");
-    Serial.printf("SC scene=camp action=capture freq=%ld rssi=%.1f source=%s\n",
-                  (long)freq_hz, (double)rssi, source);
+    // On a confident classification, surface this device as its own HA entity (Esp §6).
+    if(matched && mconf >= MQTT_IDENTIFY_CONF)
+        mqtt_publish_device_discovery(freq_hz, mclass, mname, rssi);
+    // Flush the derived catalog record(s) — the running cadence estimate lands here (System §9).
+    write_catalog();
+    Serial.printf("SC scene=camp action=capture freq=%ld rssi=%.1f cadence=%s source=%s\n",
+                  (long)freq_hz, (double)rssi, sc_cadence_str(cad.cls), source);
+}
+
+// Flush the in-RAM per-device catalog (System §9) to catalog.csv. The catalog is an AGGREGATE
+// keyed by signature, so it's rewritten from the RAM source of truth rather than appended.
+static void write_catalog() {
+    if(!g_catalog) return;
+    char path[128];
+    place_file("catalog.csv", path, sizeof(path));
+    File f = g_dfs->open(path, "w");
+    if(!f) return;
+    f.println(CATALOG_RECORD_HEADER);
+    char row[288];
+    for(int i = 0; i < ESP_CATALOG_MAX; i++) {
+        if(esp_catalog_row(g_catalog, i, row, sizeof(row)) > 0) f.println(row);
+    }
+    f.close();
 }
 
 // --- Recon: occupancy.csv + watchlist.csv (Esp §3, System §9) ---
@@ -632,13 +738,42 @@ static size_t load_watchlist_freqs(int32_t* freqs, size_t cap) {
     return n;
 }
 
+// Auto-pick the busiest watchlist frequency (highest occupancy) for Camp when none is given
+// (System §9 Auto=busiest). Returns 0 if there's no watchlist (Camp then needs an explicit freq).
+static int32_t pick_busiest_watchlist() {
+    char wl_path[128];
+    place_file("watchlist.csv", wl_path, sizeof(wl_path));
+    if(!g_dfs->exists(wl_path)) return 0;
+    File f = g_dfs->open(wl_path, "r");
+    if(!f) return 0;
+    int32_t best = 0;
+    float best_occ = -1.0f;
+    bool header = true;
+    while(f.available()) {
+        String line = f.readStringUntil('\n');
+        if(header) {
+            header = false;
+            continue;
+        }
+        ScWatchlistEntry e;
+        if(esp_watchlist_parse_line(line.c_str(), &e) && e.occupancy > best_occ) {
+            best_occ = e.occupancy;
+            best = e.freq_hz;
+        }
+    }
+    f.close();
+    return best;
+}
+
 // --- Camp mode (Esp §3) — capture pinned to its own core; live RMT/RSSI is TODO(hw) ---
 
 static void camp_task(void* arg) {
     (void)arg;
+    cc1101_tune(g_camp_freq); // tune the CC1101 to the Camp target (SPI runs; RX is TODO(hw))
     while(g_camp_running) {
-        // TODO(hw): read CC1101 RSSI; on >= threshold, RMT-capture GDO0 edges into ScRmtItem[],
-        // convert via esp_capture_rmt_to_timings(), then process_capture(). Needs a real radio.
+        // TODO(hw): read CC1101 RSSI at g_camp_freq; on >= threshold, RMT-capture GDO0 edges into
+        // ScRmtItem[], convert via esp_capture_rmt_to_timings(), then process_capture(). Needs a
+        // real radio.
         vTaskDelay(pdMS_TO_TICKS(200));
     }
     vTaskDelete(nullptr);
@@ -671,9 +806,9 @@ static void sweep_task(void* arg) {
     while(g_camp_running) { // reuse the running flag; one monitor at a time
         int32_t freq = freqs[idx % nf];
         idx++;
-        // TODO(hw): tune CC1101 to `freq`, dwell g_settings.dwell_ms sampling RSSI; on
-        // >= threshold RMT-capture and process_capture().
-        (void)freq;
+        cc1101_tune(freq); // tune to the band (SPI runs on-device)
+        // TODO(hw): dwell g_settings.dwell_ms sampling CC1101 RSSI; on >= threshold RMT-capture
+        // and process_capture(). Needs a real radio.
         vTaskDelay(pdMS_TO_TICKS(g_settings.dwell_ms ? g_settings.dwell_ms : 80));
     }
     vTaskDelete(nullptr);
@@ -714,10 +849,47 @@ static void mqtt_publish_discovery() {
 static void mqtt_ensure() {
     if(!g_settings.mqtt_enabled || WiFi.status() != WL_CONNECTED) return;
     if(g_mqtt.connected()) return;
-    g_mqtt.setServer(g_settings.mqtt_host, 1883);
+    // honor the configured broker port (Esp §6 Settings); default 1883 when unset
+    g_mqtt.setServer(g_settings.mqtt_host, g_settings.mqtt_port ? g_settings.mqtt_port : 1883);
     if(g_mqtt.connect("subcensusesp")) { // TODO(hw): needs a reachable broker
         if(g_settings.mqtt_enabled) mqtt_publish_discovery();
     }
+}
+
+// Per-identified-device HA discovery (Esp §6): on a confident classification, publish a retained
+// discovery config so the device surfaces as its own HA entity (unique_id per device/class),
+// grouped under its own HA device — not just the one node-level rssi sensor. Deduped so each
+// device is announced once; state then flows to the device's state topic per capture.
+#define MQTT_MAX_DEVICES 16
+static char g_disc_ids[MQTT_MAX_DEVICES][32];
+static int g_disc_n = 0;
+
+static bool mqtt_device_known(const char* id) {
+    for(int i = 0; i < g_disc_n; i++)
+        if(strcmp(g_disc_ids[i], id) == 0) return true;
+    return false;
+}
+
+static void mqtt_publish_device_discovery(int32_t freq, const char* cls, const char* name, float rssi) {
+    if(!g_settings.mqtt_enabled || !g_mqtt.connected()) return;
+    char dev[32];
+    if(esp_mqtt_device_id(cls && cls[0] ? cls : "unknown", freq, dev, sizeof(dev)) < 0) return;
+    if(!mqtt_device_known(dev)) {
+        char topic[160], payload[512];
+        // one rssi sensor per identified device (esp_mqtt payload builder is generic + tested)
+        esp_mqtt_discovery_topic(MQTT_BASE, dev, "rssi", topic, sizeof(topic));
+        esp_mqtt_discovery_payload(MQTT_BASE, dev, name && name[0] ? name : cls, "rssi", "RSSI",
+                                   "{{ value_json.rssi }}", "dBm", "signal_strength", payload,
+                                   sizeof(payload));
+        g_mqtt.publish(topic, payload, true); // retained
+        if(g_disc_n < MQTT_MAX_DEVICES) snprintf(g_disc_ids[g_disc_n++], 32, "%s", dev);
+    }
+    // per-device state (populates the HA entity)
+    char stopic[128], smsg[160];
+    esp_mqtt_state_topic(MQTT_BASE, dev, stopic, sizeof(stopic));
+    snprintf(smsg, sizeof(smsg), "{\"rssi\":%.1f,\"freq_hz\":%ld,\"name\":\"%s\"}", (double)rssi,
+             (long)freq, name ? name : "");
+    g_mqtt.publish(stopic, smsg);
 }
 
 static void mqtt_publish_capture(int32_t freq, float rssi, const char* match) {
@@ -1176,6 +1348,8 @@ static void web_start() {
             strncpy(g_settings.wifi_pass, req->getParam("wifi_pass", true)->value().c_str(), ESP_STR_LEN - 1);
         if(req->hasParam("mqtt_host", true))
             strncpy(g_settings.mqtt_host, req->getParam("mqtt_host", true)->value().c_str(), ESP_STR_LEN - 1);
+        if(req->hasParam("mqtt_port", true))
+            g_settings.mqtt_port = (uint16_t)req->getParam("mqtt_port", true)->value().toInt();
         save_settings();
         req->send(200, "application/json", "{\"ok\":true}");
     });
@@ -1257,6 +1431,15 @@ static void web_start() {
         else
             req->send(200, "text/csv", OCCUPANCY_HEADER "\n");
     });
+    // Derived catalog record with the per-device running cadence (System §7a/§9). GET /api/catalog
+    g_server.on("/api/catalog", HTTP_GET, [](AsyncWebServerRequest* req) {
+        char p[128];
+        place_file("catalog.csv", p, sizeof(p));
+        if(g_dfs->exists(p))
+            req->send(*g_dfs, p, "text/csv");
+        else
+            req->send(200, "text/csv", CATALOG_RECORD_HEADER "\n");
+    });
     g_server.on("/api/watchlist", HTTP_GET, [](AsyncWebServerRequest* req) {
         char p[128];
         place_file("watchlist.csv", p, sizeof(p));
@@ -1289,13 +1472,56 @@ static void web_start() {
             camp_stop();
         req->send(200, "application/json", start ? "{\"sweep\":true}" : "{\"sweep\":false}");
     });
+    // Camp on an explicit frequency (Esp §5 "camp here"); auto-picks the busiest watchlist entry
+    // when none is given (System §9). POST /api/camp  start=0|1[&freq=<hz>]
     g_server.on("/api/camp", HTTP_POST, [](AsyncWebServerRequest* req) {
         bool start = req->hasParam("start", true) ? req->getParam("start", true)->value() != "0" : true;
-        if(start)
+        if(start) {
+            int32_t freq = req->hasParam("freq", true)
+                               ? (int32_t)req->getParam("freq", true)->value().toInt()
+                               : pick_busiest_watchlist();
+            g_camp_freq = freq; // 0 => no watchlist yet; Camp still runs, tune is a no-op
             camp_start();
-        else
+            char resp[64];
+            snprintf(resp, sizeof(resp), "{\"camp\":true,\"freq_hz\":%ld}", (long)freq);
+            req->send(200, "application/json", resp);
+        } else {
             camp_stop();
-        req->send(200, "application/json", start ? "{\"camp\":true}" : "{\"camp\":false}");
+            req->send(200, "application/json", "{\"camp\":false}");
+        }
+    });
+    // Per-entry watchlist pin / exclude / clear (Esp §5 Bands). These user rows survive Recon
+    // re-runs and Reset (System §9). POST /api/watchlist  freq=<hz>&action=pin|exclude|clear
+    g_server.on("/api/watchlist", HTTP_POST, [](AsyncWebServerRequest* req) {
+        if(!req->hasParam("freq", true) || !req->hasParam("action", true)) {
+            req->send(400, "application/json", "{\"error\":\"freq + action required\"}");
+            return;
+        }
+        int32_t freq = (int32_t)req->getParam("freq", true)->value().toInt();
+        String action = req->getParam("action", true)->value();
+        const char* source = nullptr;
+        if(action == "pin")
+            source = "user-pin";
+        else if(action == "exclude")
+            source = "user-exclude";
+        else if(action != "clear") {
+            req->send(400, "application/json", "{\"error\":\"action must be pin|exclude|clear\"}");
+            return;
+        }
+        set_watchlist_pin(freq, source); // source=NULL for clear (removes the user row)
+        req->send(200, "application/json", "{\"ok\":true}");
+    });
+    // Expose the label taxonomy (System §5) so the Review tab can offer a class dropdown instead
+    // of a free-text prompt. GET /api/taxonomy
+    g_server.on("/api/taxonomy", HTTP_GET, [](AsyncWebServerRequest* req) {
+        String out = "{\"classes\":[";
+        for(int i = 0; i < CENSUS_CLASS_COUNT; i++) {
+            if(i) out += ",";
+            out += "{\"id\":\"" + String(census_class_id((CensusDeviceClass)i)) + "\",\"name\":\"" +
+                   String(census_class_name((CensusDeviceClass)i)) + "\"}";
+        }
+        out += "]}";
+        req->send(200, "application/json", out);
     });
     // Replay a stored capture on its own freq/preset (identify-your-own-device). Guarded.
     // POST /api/replay  sub=<place-relative path>
@@ -1391,7 +1617,11 @@ static void web_start() {
         ScKnnQuery q;
         memset(&q, 0, sizeof(q));
         q.fv = fv;
-        q.cadence_class = SC_CADENCE_NONE;
+        // reuse the device's running cadence (System §7a) as a soft booster, if we've seen it
+        ScCadenceEstimate ce;
+        q.cadence_class =
+            (g_catalog && esp_catalog_peek(g_catalog, &fv, &ce)) ? ce.cls : SC_CADENCE_NONE;
+        q.period_s = (q.cadence_class != SC_CADENCE_NONE) ? ce.period_s : 0.0f;
         ScKnnMatch m[3];
         size_t k = sc_knn_match(&q, g_fps, g_fp_count, m, 3);
         String out = "{\"candidates\":[";
@@ -1480,8 +1710,12 @@ void setup() {
     save_settings();
 
     cc1101_init();
+    cc1101_configure(g_settings.capture_preset); // push the CC1101 preset regs (Esp §3; RX TODO(hw))
     Serial.printf("SC cc1101 present=%d version=0x%02x\n", g_cc1101_present, g_cc1101_version);
 
+    // per-device running cadence estimators (System §7a) — heap-allocated (~11 KB, off .bss)
+    g_catalog = (EspCatalog*)calloc(1, sizeof(EspCatalog));
+    if(g_catalog) esp_catalog_init(g_catalog, 1.0f);
     load_fingerprints(); // classification brain (System §6)
     wifi_start();
     web_start();

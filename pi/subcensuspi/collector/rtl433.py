@@ -8,21 +8,78 @@ behaviour (gain/ppm/real reception) is the only part that needs hardware — TOD
 
 from __future__ import annotations
 
+import logging
 import shutil
 import subprocess
+import time
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator
 
 from ..config import DongleConfig
+
+log = logging.getLogger("subcensuspi.rtl433")
 
 
 def rtl433_available() -> bool:
     return shutil.which("rtl_433") is not None
 
 
+def supervise_stream(
+    factory: Callable[[], Iterator[str]],
+    *,
+    max_relaunches: int | None = None,
+    backoff_s: float = 1.0,
+    backoff_max_s: float = 30.0,
+    sleep: Callable[[float], None] = time.sleep,
+    on_relaunch: Callable[[int, float], None] | None = None,
+) -> Iterator[str]:
+    """Respawn-with-backoff wrapper around a line stream (Pi §9: "Collector should relaunch
+    rtl_433 if it dies").
+
+    ``factory`` builds a fresh line iterator (e.g. ``lambda: stream_live(dongle)``). When the
+    iterator is exhausted or raises (rtl_433 exited / crashed), the stream is relaunched after
+    an exponential backoff. This is per-dongle supervision — distinct from systemd
+    Restart=always, which would restart the whole process and drop every other dongle's stream.
+
+    Purely orchestration: no hardware, no rtl_433 binary — a fixture/mock factory drives it in
+    tests. ``max_relaunches=None`` supervises forever (production); a finite value bounds it so
+    tests terminate. ``sleep`` is injectable so tests don't actually wait.
+    """
+    relaunches = 0
+    delay = backoff_s
+    while True:
+        produced = False
+        try:
+            for line in factory():
+                produced = True
+                delay = backoff_s  # a healthy stream resets the backoff
+                yield line
+        except Exception as exc:  # a crashed producer is just another "died" case (Pi §9)
+            log.warning("SC event=stream_error err=%s", exc)
+        if max_relaunches is not None and relaunches >= max_relaunches:
+            return
+        relaunches += 1
+        wait = delay
+        log.warning(
+            "SC event=stream_relaunch attempt=%d backoff_s=%.1f produced=%s",
+            relaunches, wait, produced,
+        )
+        if on_relaunch is not None:
+            on_relaunch(relaunches, wait)
+        sleep(wait)
+        delay = min(delay * 2, backoff_max_s)
+
+
 def build_argv(dongle: DongleConfig, extra: list[str] | None = None) -> list[str]:
-    """Baseline decode stream (Pi §4). Multi-freq hop when >1 freq configured."""
-    argv = ["rtl_433", "-F", "json", "-M", "time:iso:tz", "-M", "level", "-M", "protocol"]
+    """Baseline decode stream (Pi §4). Multi-freq hop when >1 freq configured.
+
+    Matches the §4 baseline: -M time:iso:tz -M level -M protocol -M stats (periodic health)
+    plus -Y autolevel (adaptive detection level).
+    """
+    argv = [
+        "rtl_433", "-F", "json",
+        "-M", "time:iso:tz", "-M", "level", "-M", "protocol", "-M", "stats",
+    ]
     if dongle.serial:
         argv += ["-d", f":{dongle.serial}"]
     for f in dongle.freqs:
@@ -33,6 +90,7 @@ def build_argv(dongle: DongleConfig, extra: list[str] | None = None) -> list[str
         argv += ["-g", str(dongle.gain)]
     if dongle.ppm:
         argv += ["-p", str(dongle.ppm)]
+    argv += ["-Y", "autolevel"]
     argv += extra or []
     return argv
 

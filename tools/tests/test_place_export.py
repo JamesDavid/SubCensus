@@ -85,3 +85,130 @@ def test_analyze_round_trip_with_fake_model(zero_place, tmp_path):
     assert len(proposed) == 1 and proposed[0]["candidate"] == "weather"
     out = analyze_place.write_analysis(tmp_path / "a", analysis)
     assert (out / "analysis.json").exists() and (out / "analysis.md").exists()
+
+
+# --- S-A2: device roll-up parity (period_regularity + match candidate + decoded IDs) ---
+
+MATCH_LOG = (
+    "ts_iso,freq_hz,rssi_dbm,duration_ms,preset,fsk_suspected,protocol,key,match_name,"
+    "match_class,match_conf,match_source,sub_file,label\n"
+    "2026-07-04T12:00:00,433920000,-60.0,0,OOK650,0,Acurite-Tower,ID42,Acurite tower,weather,0.91,decoder,captures/a.sub,\n"
+    "2026-07-04T12:01:00,433920000,-61.0,0,OOK650,0,Acurite-Tower,ID42,Acurite tower,weather,0.95,decoder,captures/b.sub,\n"
+    "2026-07-04T12:02:00,433920000,-60.0,0,OOK650,0,Acurite-Tower,ID42,,,0.00,,captures/c.sub,\n"
+)
+
+
+def test_device_rollup_regularity_and_match_candidate(tmp_path):
+    d = tmp_path / "home_2b3c"
+    d.mkdir()
+    (d / "census_log.csv").write_text(MATCH_LOG, encoding="utf-8", newline="")
+    bundle = build_bundle(d)
+    acurite = next(e for e in bundle["devices"]["identified"] if e["protocol"] == "Acurite-Tower")
+    # (a) coarse cadence now emits period_regularity (System §7a: 1 - min(1, CoV))
+    assert acurite["cadence"]["period_regularity"] == 1.0  # metronomic 60 s
+    # (b) match candidate (highest-conf row) + decoded id folded in (parity with the Pi sibling)
+    assert acurite["decoded_id"] == "ID42"
+    assert acurite["match_candidate"]["device_class"] == "weather"
+    assert acurite["match_candidate"]["match_conf"] == 0.95
+    assert acurite["match_candidate"]["match_source"] == "decoder"
+
+
+# --- S-A3: §7b differential + checksum guess folded into the unknowns payload ---
+
+def _sub_from_hex(hexstr: str, freq: int = 315000000, unit: int = 400) -> str:
+    bits = "".join(f"{b:08b}" for b in bytes.fromhex(hexstr))
+    raw = " ".join(str(unit if c == "1" else -unit) for c in bits)
+    return ("Filetype: Flipper SubGhz RAW File\nVersion: 1\n"
+            f"Frequency: {freq}\nPreset: FuriHalSubGhzPreset2FSKDev238Async\n"
+            f"Protocol: RAW\nRAW_Data: {raw}\n")
+
+
+def test_unknown_field_discovery_from_captures(tmp_path):
+    d = tmp_path / "home_3c4d"
+    (d / "captures").mkdir(parents=True)
+    # 3 aligned frames with a trailing XOR check byte (byte3 = byte0^byte1^byte2)
+    for name, h in [("d.sub", "a50014b1"), ("e.sub", "a50114b0"), ("f.sub", "a50215b2")]:
+        (d / "captures" / name).write_text(_sub_from_hex(h), encoding="utf-8")
+    log = (
+        "ts_iso,freq_hz,rssi_dbm,duration_ms,preset,fsk_suspected,protocol,key,match_name,"
+        "match_class,match_conf,match_source,sub_file,label\n"
+        "2026-07-04T12:03:00,315000000,-70.0,0,2FSK,1,,,,,0.00,,captures/d.sub,\n"
+        "2026-07-04T12:04:00,315000000,-70.0,0,2FSK,1,,,,,0.00,,captures/e.sub,\n"
+        "2026-07-04T12:05:00,315000000,-70.0,0,2FSK,1,,,,,0.00,,captures/f.sub,\n"
+    )
+    (d / "census_log.csv").write_text(log, encoding="utf-8", newline="")
+    bundle = build_bundle(d)
+    unk = bundle["unknowns"][0]
+    fd = unk["field_discovery"]
+    assert fd["n_frames"] == 3 and fd["n_bytes"] == 4
+    assert [s["class"] for s in fd["segments"]] == ["static", "counter", "slow", "checksum"]
+    assert fd["checksum"] is not None and fd["checksum"]["kind"] == 1  # CK_XOR
+
+
+# --- S-A5: occupancy coverage gaps ---
+
+def test_occupancy_coverage_gaps(zero_place):
+    bundle = build_bundle(zero_place)
+    gaps = bundle["occupancy_digest"]["coverage_gaps"]
+    # 315 MHz and 433.92 MHz are active (>118 MHz apart) -> an unmonitored span
+    assert any(g["type"] == "unmonitored-span" for g in gaps)
+    # 868/915 have no occupancy -> band-no-occupancy gaps
+    bands = {g.get("band") for g in gaps if g["type"] == "band-no-occupancy"}
+    assert {"868 MHz", "915 MHz"} <= bands
+
+
+# --- S-A1: --apply write-back into the global brain ---
+
+def test_apply_labels_writes_protocol_map(tmp_path):
+    sig = tmp_path / "signatures"
+    analysis = {"identifications": [
+        {"signature": "Acurite-Tower", "candidate": "weather", "confidence": 0.9},
+        {"signature": "Guessy", "candidate": "tpms", "confidence": 0.5},        # below floor
+        {"signature": "Bogus", "candidate": "not-a-class", "confidence": 0.99},  # off-taxonomy
+    ]}
+    applied = analyze_place.apply_labels(analysis, sig, 0.8, valid_classes={"weather", "tpms"})
+    assert [(a["protocol"], a["device_class"]) for a in applied] == [("Acurite-Tower", "weather")]
+    rows = brain.read_protocol_map(sig / "protocol_map.csv")
+    assert [(r["protocol"], r["device_class"]) for r in rows] == [("Acurite-Tower", "weather")]
+    assert "source=user" in rows[0]["notes"]
+
+
+def test_apply_labels_cli_flag(zero_place, tmp_path):
+    # export -> analyze (fake model) -> apply via the CLI (no network)
+    out = tmp_path / "out"
+    export_place.main(["--place", str(zero_place), "--out", str(out)])
+    analysis = {"identifications": [{"signature": "Acurite-Tower", "candidate": "weather", "confidence": 0.95}],
+                "field_maps": [], "anomalies": [], "coverage_gaps": [], "inventory": [],
+                "recommended_actions": []}
+    analyze_place.write_analysis(out, analysis)
+    sig = tmp_path / "sig"
+    applied = analyze_place.apply_labels(analysis, sig, 0.8, valid_classes=set(_tax_ids()))
+    assert applied and (sig / "protocol_map.csv").exists()
+
+
+def _tax_ids():
+    from subcensus_tools.taxonomy import Taxonomy
+    return Taxonomy.load().ids()
+
+
+# --- S-A4: re-runnable, diffs vs the prior analysis ---
+
+def test_diff_vs_prior_analysis(tmp_path):
+    prev = {"identifications": [{"signature": "X", "candidate": "weather", "confidence": 0.9}],
+            "anomalies": ["old anomaly"]}
+    curr = {"identifications": [{"signature": "X", "candidate": "remote", "confidence": 0.9},
+                                {"signature": "Y", "candidate": "tpms", "confidence": 0.8}],
+            "anomalies": ["new anomaly"]}
+    d = analyze_place.diff_analyses(prev, curr)
+    assert [i["signature"] for i in d["identifications"]["added"]] == ["Y"]
+    assert [c["signature"] for c in d["identifications"]["changed"]] == ["X"]
+    assert d["anomalies"]["added"] == ["new anomaly"]
+    assert d["anomalies"]["removed"] == ["old anomaly"]
+
+    # write_analysis on a re-run renders the diff into analysis.md
+    out = tmp_path / "place"
+    analyze_place.write_analysis(out, prev)
+    analyze_place.write_analysis(out, curr)
+    md = (out / "analysis.md").read_text(encoding="utf-8")
+    assert "Diff vs prior analysis" in md
+    assert "identifications changed" in md

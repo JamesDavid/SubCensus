@@ -1,6 +1,27 @@
 #include "esp_mqtt.h"
 
+#include <stdint.h>
 #include <stdio.h>
+
+int esp_mqtt_device_id(const char* device_class, int32_t freq_hz, char* out, size_t cap) {
+    char cls[24];
+    size_t j = 0;
+    for(const char* p = device_class ? device_class : ""; *p && j < sizeof(cls) - 1; p++) {
+        char c = *p;
+        int alnum = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+        cls[j++] = alnum ? c : '_';
+    }
+    cls[j] = '\0';
+    if(j == 0) {
+        cls[0] = 'd';
+        cls[1] = 'e';
+        cls[2] = 'v';
+        cls[3] = '\0';
+    }
+    long khz = (long)((freq_hz >= 0 ? freq_hz : -freq_hz) / 1000);
+    int n = snprintf(out, cap, "%s_%ld", cls, khz);
+    return (n < 0 || (size_t)n >= cap) ? -1 : n;
+}
 
 int esp_mqtt_discovery_topic(
     const char* base_topic, const char* device_id, const char* entity, char* out, size_t cap) {

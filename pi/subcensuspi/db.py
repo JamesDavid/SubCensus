@@ -8,11 +8,30 @@ the start (default 'home'); place scoping becomes user-facing in M8.
 
 from __future__ import annotations
 
+import datetime as _dt
 import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
+
+from .dsp import cadence as _cadence
+
+# cadence_* columns added after the original devices table shipped — ALTER in for old DBs.
+_DEVICE_CADENCE_COLS = {
+    "cadence_class": "TEXT",
+    "period_s": "REAL",
+    "period_regularity": "REAL",
+    "cadence_samples": "INTEGER",
+}
+
+
+def iso_to_epoch(ts: str) -> float | None:
+    """Best-effort ISO-8601 -> epoch seconds (rtl_433 -M time:iso:tz). None if unparseable."""
+    try:
+        return _dt.datetime.fromisoformat(ts).timestamp()
+    except (TypeError, ValueError):
+        return None
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS devices(
@@ -21,7 +40,9 @@ CREATE TABLE IF NOT EXISTS devices(
     place TEXT,
     first_seen TEXT, last_seen TEXT, count INTEGER,
     typical_freq_hz INTEGER, avg_snr REAL,
-    label TEXT, room TEXT, device_class TEXT, notes TEXT
+    label TEXT, room TEXT, device_class TEXT, notes TEXT,
+    -- dropout-robust cadence (System §7a); the Pi is the strongest measurer (Pi §5).
+    cadence_class TEXT, period_s REAL, period_regularity REAL, cadence_samples INTEGER
 );
 CREATE TABLE IF NOT EXISTS events(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -70,7 +91,15 @@ class Database:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self) -> None:
+        """Additive migrations for DBs created before newer columns (idempotent)."""
+        have = {r["name"] for r in self.conn.execute("PRAGMA table_info(devices)").fetchall()}
+        for col, coltype in _DEVICE_CADENCE_COLS.items():
+            if col not in have:
+                self.conn.execute(f"ALTER TABLE devices ADD COLUMN {col} {coltype}")
 
     def close(self) -> None:
         self.conn.close()
@@ -217,3 +246,40 @@ class Database:
         return self.conn.execute(
             "SELECT * FROM events WHERE device_id=? ORDER BY id", (device_id,)
         ).fetchall()
+
+    def unknown_timestamps(self, place: str, freq_hz: int) -> list[str]:
+        """Capture times of every unknown burst at a (place, freq) — the reception history a
+        repeatedly-heard unknown signal accrues (feeds its cadence, §7a)."""
+        rows = self.conn.execute(
+            "SELECT ts FROM unknowns WHERE place=? AND freq_hz=? ORDER BY ts", (place, freq_hz)
+        ).fetchall()
+        return [r["ts"] for r in rows]
+
+    # --- cadence (System §7a; the Pi is the strongest measurer, Pi §5) ---
+
+    def device_cadence(self, device_id: str) -> _cadence.CadenceEstimate:
+        """Dropout-robust cadence from this device's full event history (ISO ts -> epoch)."""
+        secs = [e for e in (iso_to_epoch(t) for t in self.device_event_timestamps(device_id))
+                if e is not None]
+        return _cadence.from_timestamps(secs)
+
+    def update_device_cadence(self, device_id: str) -> _cadence.CadenceEstimate:
+        """Recompute + persist the four cadence_* columns for a device. period_s NULL when the
+        cadence class has no fundamental (event-driven/seen-once)."""
+        est = self.device_cadence(device_id)
+        period = est.period_s if est.period_s > 0 else None
+        self.conn.execute(
+            "UPDATE devices SET cadence_class=?, period_s=?, period_regularity=?,"
+            " cadence_samples=? WHERE device_id=?",
+            (est.cls, period, est.regularity, est.samples, device_id),
+        )
+        self.conn.commit()
+        return est
+
+    def refresh_all_cadences(self) -> int:
+        """Recompute cadence for every device (catalog enrichment, §5/§7a). Returns count."""
+        ids = [r["device_id"] for r in
+               self.conn.execute("SELECT device_id FROM devices").fetchall()]
+        for did in ids:
+            self.update_device_cadence(did)
+        return len(ids)
