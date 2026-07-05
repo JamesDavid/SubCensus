@@ -52,6 +52,14 @@ struct CensusWorker {
     volatile bool decoded;
     char decoded_name[24];
     volatile float capture_peak;
+    /* Dual re-capture state (§5.3): base = OOK, retry the NEXT occurrence under 2-FSK when an
+     * OOK decode failed on a strong signal. */
+    FuriHalSubGhzPreset base_preset;
+    char base_preset_name[24];
+    FuriHalSubGhzPreset fsk_preset;
+    bool fsk_retry_armed; /* next capture on this freq should use 2-FSK */
+    bool fsk_retry_active; /* the current capture IS the 2-FSK retry */
+    int last_fsk_suspected; /* set by the last census_process_capture */
 
     /* live state */
     volatile float rssi;
@@ -131,6 +139,7 @@ static void census_process_capture(CensusWorker* w, uint32_t freq, float rssi, f
     int fsk_suspected =
         (!w->decoded && peak >= -75.0f && census_preset_modulation(w->preset) == SC_MOD_OOK) ? 1 :
                                                                                                0;
+    w->last_fsk_suspected = fsk_suspected;
 
     char ts[32];
     census_iso_now(ts, sizeof(ts));
@@ -138,32 +147,38 @@ static void census_process_capture(CensusWorker* w, uint32_t freq, float rssi, f
     ScFeatureVector fv;
     sc_feature_compute(w->timings, n, (int32_t)freq, census_preset_modulation(w->preset), &fv);
 
-    /* write the standard .sub into the active place's captures/ */
-    char sub_rel[128];
-    snprintf(
-        sub_rel,
-        sizeof(sub_rel),
-        "captures/%s_%lu_%s.sub",
-        ts,
-        (unsigned long)(freq / 1000),
-        w->preset_name);
-    char sub_abs[160];
-    census_place_file(w->place_id, sub_rel, sub_abs, sizeof(sub_abs));
+    /* SD full (§6.1): stop writing captures, but still log an RSSI-only "blip" row (empty
+     * sub_file) so busy-but-uncapturable activity is still noted. */
+    bool sd_low = census_sd_low(w->storage);
 
-    ScSubMeta meta = {(int32_t)freq, "", "RAW"};
-    snprintf(meta.preset, sizeof(meta.preset), "%s", w->preset_name);
-    char* subbuf = malloc(CENSUS_SUB_BUF);
-    size_t sublen = 0;
-    if(subbuf &&
-       sc_sub_encode(&meta, w->timings, n, subbuf, CENSUS_SUB_BUF, 512, &sublen) == SC_OK) {
-        File* f = storage_file_alloc(w->storage);
-        if(storage_file_open(f, sub_abs, FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
-            storage_file_write(f, subbuf, sublen);
+    /* write the standard .sub into the active place's captures/ (skipped when the card is low) */
+    char sub_rel[128] = "";
+    if(!sd_low) {
+        snprintf(
+            sub_rel,
+            sizeof(sub_rel),
+            "captures/%s_%lu_%s.sub",
+            ts,
+            (unsigned long)(freq / 1000),
+            w->preset_name);
+        char sub_abs[160];
+        census_place_file(w->place_id, sub_rel, sub_abs, sizeof(sub_abs));
+
+        ScSubMeta meta = {(int32_t)freq, "", "RAW"};
+        snprintf(meta.preset, sizeof(meta.preset), "%s", w->preset_name);
+        char* subbuf = malloc(CENSUS_SUB_BUF);
+        size_t sublen = 0;
+        if(subbuf &&
+           sc_sub_encode(&meta, w->timings, n, subbuf, CENSUS_SUB_BUF, 512, &sublen) == SC_OK) {
+            File* f = storage_file_alloc(w->storage);
+            if(storage_file_open(f, sub_abs, FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
+                storage_file_write(f, subbuf, sublen);
+            }
+            storage_file_close(f);
+            storage_file_free(f);
         }
-        storage_file_close(f);
-        storage_file_free(f);
+        if(subbuf) free(subbuf);
     }
-    if(subbuf) free(subbuf);
 
     /* append the census_log row (order = CENSUS_LOG_HEADER; classification match_* land in M6) */
     char row[256];
@@ -217,10 +232,45 @@ static void census_process_capture(CensusWorker* w, uint32_t freq, float rssi, f
     if(w->callback) w->callback(w->callback_context);
 }
 
+/* Load a preset for the next capture window (Dual §5.3 re-capture). Restarts async RX so the
+ * following signal is captured under the new modulation. Live radio = TODO(hw). */
+static void census_reload_preset(CensusWorker* w, FuriHalSubGhzPreset preset, const char* name) {
+    subghz_devices_stop_async_rx(w->device);
+    subghz_devices_idle(w->device);
+    w->preset = preset;
+    strncpy(w->preset_name, name, sizeof(w->preset_name) - 1);
+    w->preset_name[sizeof(w->preset_name) - 1] = '\0';
+    subghz_devices_load_preset(w->device, w->preset, NULL);
+    w->timings_len = 0;
+    subghz_devices_start_async_rx(w->device, census_capture_cb, w);
+}
+
+/* Called after a capture finalizes to advance the Dual OOK->FSK state machine (§5.3). */
+static void census_dual_after_capture(CensusWorker* w) {
+    if(!w->dual) return;
+    if(w->fsk_retry_active) {
+        /* the 2-FSK retry just finished — revert to the OOK base for subsequent captures */
+        w->fsk_retry_active = false;
+        w->fsk_retry_armed = false;
+        census_reload_preset(w, w->base_preset, w->base_preset_name);
+    } else if(w->last_fsk_suspected) {
+        /* OOK decode failed on a strong signal — recapture the NEXT occurrence under 2-FSK */
+        w->fsk_retry_armed = true;
+        w->fsk_retry_active = true;
+        census_reload_preset(w, w->fsk_preset, "2FSK");
+    }
+}
+
 /* Monitor one frequency for up to `window_ms` (0 = until stopped). Captures on threshold.
  * Live RSSI/capture needs real airtime (TODO(hw)); the state machine + processing are real. */
 static void census_monitor_freq(CensusWorker* w, uint32_t freq, uint32_t window_ms) {
     w->current_freq = freq;
+    /* start each frequency on the base preset unless a 2-FSK retry is armed (§5.3) */
+    if(w->dual && !w->fsk_retry_active) {
+        w->preset = w->base_preset;
+        strncpy(w->preset_name, w->base_preset_name, sizeof(w->preset_name) - 1);
+        w->preset_name[sizeof(w->preset_name) - 1] = '\0';
+    }
     subghz_devices_idle(w->device);
     subghz_devices_set_frequency(w->device, freq);
     subghz_devices_load_preset(w->device, w->preset, NULL);
@@ -253,12 +303,14 @@ static void census_monitor_freq(CensusWorker* w, uint32_t freq, uint32_t window_
             if((now - quiet_since) >= w->signal_end_gap_ms) {
                 census_process_capture(w, freq, rssi, w->capture_peak);
                 capturing = false;
+                census_dual_after_capture(w); /* OOK->FSK re-capture arming (§5.3) */
                 furi_delay_ms(w->min_gap_ms); /* repeat suppression (§7) */
             }
         }
         if(capturing && (now - capture_start) >= w->capture_max_ms) {
             census_process_capture(w, freq, rssi, w->capture_peak);
             capturing = false;
+            census_dual_after_capture(w);
         }
         if(window_ms && (now - start) >= window_ms) break;
         furi_delay_ms(2);
@@ -349,6 +401,13 @@ void census_worker_configure(CensusWorker* w, const CensusSettings* s, const cha
         strncpy(w->preset_name, "OOK650", sizeof(w->preset_name) - 1);
         break;
     }
+    /* Dual re-capture base/retry presets (§5.3): base = the chosen OOK preset, retry = 2-FSK */
+    w->base_preset = w->preset;
+    strncpy(w->base_preset_name, w->preset_name, sizeof(w->base_preset_name) - 1);
+    w->base_preset_name[sizeof(w->base_preset_name) - 1] = '\0';
+    w->fsk_preset = FuriHalSubGhzPreset2FSKDev476Async;
+    w->fsk_retry_armed = false;
+    w->fsk_retry_active = false;
 }
 
 static void census_worker_run(CensusWorker* w) {

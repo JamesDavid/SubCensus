@@ -79,6 +79,30 @@ def parse_candidates(text: str) -> list[dict]:
     return cands
 
 
+FIELDMAP_KEYS = {"signature", "nbits", "n_bytes", "fields", "checksum", "confidence", "reasoning"}
+FIELD_KEYS = {"name", "start_bit", "length", "class", "semantics"}
+FIELD_CLASSES = {"static", "slow", "counter", "checksum", "data"}
+
+
+def parse_fieldmap(text: str) -> dict:
+    """A field-map discovery proposal (Esp §5, System §7b) — the passive differential overlay +
+    named checksum the node serves for segment labeling. Fields round-trip to shared/core ScField.
+    PROPOSAL only; never auto-committed."""
+    obj = json.loads(text)
+    missing = FIELDMAP_KEYS - set(obj)
+    if missing:
+        raise ValueError(f"/api/fieldmap missing keys: {sorted(missing)}")
+    for f in obj["fields"]:
+        if not FIELD_KEYS <= set(f):
+            raise ValueError(f"field segment missing keys: {f}")
+        if f["class"] not in FIELD_CLASSES:
+            raise ValueError(f"unknown field class {f['class']!r}")
+    ck = obj["checksum"]
+    if ck is not None and "kind" not in ck:
+        raise ValueError("checksum present but unnamed")
+    return obj
+
+
 def parse_ws_capture(msg: str) -> dict:
     """A live-feed WebSocket capture message (Esp §5)."""
     obj = json.loads(msg)
@@ -103,6 +127,16 @@ class NodeClient:
         import httpx
 
         return parse_captures_csv(httpx.get(f"{self.base_url}/api/captures").text)
+
+    def fieldmap(self, frames_hex: str, signature: str = "unknown") -> dict:  # pragma: no cover
+        """Post an aligned hex-frame corpus to /api/fieldmap and parse the proposal (Esp §5)."""
+        import httpx
+
+        r = httpx.post(
+            f"{self.base_url}/api/fieldmap",
+            data={"frames": frames_hex, "signature": signature},
+        )
+        return parse_fieldmap(r.text)
 
     def inject_sub(self, sub_text: str) -> dict:  # pragma: no cover - needs a node
         """Fixture-inject a .sub through /api/debug/inject (Esp §3.4) — drives the full

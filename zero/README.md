@@ -72,19 +72,29 @@ harness (`tools/debug/flipper_*`) drives on-device UI once a Flipper is attached
 
 ## Status
 
-**All milestones complete (M0–M10):**
+**All milestones complete (M0–M10), spec-delta zero:**
 - **M0** Phase-0 prior-art + SDK pin (`docs/SubCensusZero_Phase0_Findings.md`) · **M1** skeleton
-  (menu, Settings, Places, freq guard, About) · **M2** Camp capture engine (`census_worker`:
-  async RX → feature vector → `.sub` + census_log + notify; live view) · **M3** Sweep
-  (watchlist-or-preset) · **M4** Recon (`census_recon`: hybrid-grid occupancy → occupancy.csv +
-  watchlist.csv) · **M5** auto-classify (`SubGhzReceiver`/environment protocol tagging) ·
-  **M6** classification DB (`census_brain`: gated k-NN + confirm-appends-fingerprint) ·
-  **M7** Dual OOK/FSK (`fsk_suspected`) · **M8** Review + on-device labeling + replay-to-identify ·
-  **M9** host `export_place`/`analyze_place` accept a Zero place folder (`tools/`) ·
-  **M10** confirm-gated edit-before-transmit TX flow (optional).
+  (menu, **full §4 Settings**, Places, freq guard, About) · **M2** Camp capture engine
+  (`census_worker`: async RX → feature vector → `.sub` + census_log + notify; live view with
+  **recent-hits list → jump-to-Review**) · **M3** Sweep (watchlist-or-preset) · **M4** Recon
+  (`census_recon`: hybrid/known/full grid → occupancy.csv + watchlist.csv; **auto-following
+  spectrum strip** live view; **Recon results Pin/Exclude/Camp-here + Reset (keep/wipe pins)**) ·
+  **M5** auto-classify (`SubGhzReceiver`/environment protocol tagging) · **M6** classification DB
+  (`census_brain`: gated k-NN + confirm-appends-fingerprint) · **M7** Dual OOK/FSK with **real
+  re-capture of the next occurrence under 2-FSK** (`fsk_suspected` + preset switch) · **M8** Review
+  + on-device labeling (**in-place `census_log` label rewrite** + Accept-candidate) +
+  replay-to-identify · **M9** host `export_place`/`analyze_place` accept a Zero place folder
+  (`tools/`) · **M10** full edit-before-transmit / field-map discovery: **raw bit/hex editor**,
+  **structured field editor** (field-map + checksum re-sign + decode-back gate), **differential-
+  seeded segment labeling** on unknowns (`sc_diff` → `sc_fieldmap`), **Propose field-map**
+  (`signatures/field_maps/*.fmap`, user-confirmed) and **own-device active confirmation** via the
+  guarded single-frame edit-TX path (logged distinctly in `edits_log.csv`).
+
+Also: the **Camp frequency picker** (Watchlist / presets / Manual entry / Auto=busiest), the
+**Custom frequency-list editor**, and the **SD-required / SD-full** states (§6.1: blocking screen
++ auto-recover; low-space → RSSI-only blip rows + banner; free space in About) are all in.
 
 Live RSSI / capture / TX are on-device (`TODO(hw)`); the processing they feed is `shared/core`
-(native-tested) and every milestone compile-checks under `ufbt`. The full on-device raw-bit /
-structured-field editor (M10) is the remaining optional UI depth — its passive primitives
-(`sc_diff` / `sc_crc`) already ship. A distributable brain seed lives in
+(native-tested — `sc_fieldmap` / `sc_slice` added for the editor) and the whole FAP compile-checks
++ lints clean under `ufbt`. A distributable brain seed lives in
 [`../shared/signatures/`](../shared/signatures/).

@@ -2,7 +2,8 @@
 
 #include <stdio.h>
 
-/* About (Zero §6): version, built-against SDK/API, passive-RX note, active place. */
+/* About (Zero §6): version, built-against SDK/API, passive-RX note, active place, storage tier
+ * + free space, and the expected battery drain for long census runs. */
 
 void subcensus_scene_about_on_enter(void* context) {
     SubCensusApp* app = context;
@@ -12,7 +13,21 @@ void subcensus_scene_about_on_enter(void* context) {
     char place_name[CENSUS_PLACE_NAME_LEN];
     census_place_name(app->storage, app->settings.place_id, place_name, sizeof(place_name));
 
-    static char text[512];
+    /* storage tier + free space (§6.1 surfaces remaining space here) */
+    char storage_line[48];
+    uint64_t freeb = 0, totalb = 0;
+    if(census_sd_space(app->storage, &freeb, &totalb)) {
+        snprintf(
+            storage_line,
+            sizeof(storage_line),
+            "Storage: /ext SD %lu/%lu MB",
+            (unsigned long)(freeb / (1024 * 1024)),
+            (unsigned long)(totalb / (1024 * 1024)));
+    } else {
+        snprintf(storage_line, sizeof(storage_line), "Storage: /ext SD (absent)");
+    }
+
+    static char text[640];
     snprintf(
         text,
         sizeof(text),
@@ -25,14 +40,18 @@ void subcensus_scene_about_on_enter(void* context) {
         "& Edit-TX are explicit only,\n"
         "TX-allow-list gated.\n"
         "\n"
-        "Storage: /ext (SD)\n"
+        "%s\n"
         "Place: %s\n"
         "\n"
-        "Long runs drain battery;\n"
-        "screen may dim, worker runs.\n"
+        "Battery: continuous RX draws\n"
+        "~30-40 mA; a full charge lasts\n"
+        "~5-8 h of Camp/Sweep. Recon\n"
+        "(hopping) is similar. Screen\n"
+        "dims; the worker keeps running.\n"
         "\n"
         "Prior art: ProtoView, Read RAW,\n"
         "Freq/Spectrum Analyzer, FlipRSDR.",
+        storage_line,
         place_name);
 
     widget_add_text_scroll_element(w, 0, 0, 128, 64, text);

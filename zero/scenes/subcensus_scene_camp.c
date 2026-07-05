@@ -11,10 +11,18 @@ static void camp_worker_cb(void* context) {
     view_dispatcher_send_custom_event(app->view_dispatcher, CAMP_EVENT_CAPTURE);
 }
 
+/* OK on a recent-hits row: jump to Review (worker keeps running, §6). */
+static void camp_jump_cb(void* context, uint32_t freq_hz) {
+    SubCensusApp* app = context;
+    app->review_jump_freq = freq_hz;
+    scene_manager_next_scene(app->scene_manager, SubCensusSceneReview);
+}
+
 static void camp_timer_cb(void* context) {
     SubCensusApp* app = context;
     CensusHit hits[8];
     size_t n = census_worker_recent_hits(app->worker, hits, 8);
+    census_camp_view_set_low(app->camp_view, census_sd_low(app->storage));
     census_camp_view_update(
         app->camp_view,
         app->live_sweep,
@@ -28,6 +36,7 @@ static void camp_timer_cb(void* context) {
 void subcensus_scene_camp_on_enter(void* context) {
     SubCensusApp* app = context;
     app->live_sweep = false;
+    census_camp_view_set_jump_callback(app->camp_view, camp_jump_cb, app);
     census_worker_configure(app->worker, &app->settings, app->settings.place_id);
     census_worker_set_callback(app->worker, camp_worker_cb, app);
     census_worker_start_camp(app->worker, app->camp_freq);

@@ -25,9 +25,13 @@ void census_settings_set_defaults(CensusSettings* s) {
     s->signal_end_gap_ms = 120;
     s->min_gap_ms = 500;
     s->survey_minutes = 15;
+    s->recon_grid = CensusReconGridHybrid;
+    s->recon_step_hz = 250000; /* coarse background grid step / RX BW (§3.3 Stage A) */
+    s->camp_freq_hz = 433920000; /* explicit default; 0 would mean Auto=busiest */
     s->auto_classify = true;
     s->match_db = true;
     s->notify = CensusNotifyLed;
+    s->custom_count = 0;
 }
 
 bool census_settings_save(Storage* storage, const CensusSettings* s) {
@@ -54,9 +58,15 @@ bool census_settings_save(Storage* storage, const CensusSettings* s) {
     WU("signal_end_gap_ms", s->signal_end_gap_ms);
     WU("min_gap_ms", s->min_gap_ms);
     WU("survey_minutes", s->survey_minutes);
+    WU("recon_grid", s->recon_grid);
+    WU("recon_step_hz", s->recon_step_hz);
+    WU("camp_freq_hz", s->camp_freq_hz);
     WU("auto_classify", s->auto_classify);
     WU("match_db", s->match_db);
     WU("notify", s->notify);
+    WU("custom_count", s->custom_count);
+    if(ok && s->custom_count > 0)
+        ok = flipper_format_write_uint32(ff, "custom_freqs", s->custom_freqs, s->custom_count);
 #undef WU
 #undef WI
     flipper_format_free(ff);
@@ -94,9 +104,16 @@ bool census_settings_load(Storage* storage, CensusSettings* s) {
     RU("signal_end_gap_ms", s->signal_end_gap_ms);
     RU("min_gap_ms", s->min_gap_ms);
     RU("survey_minutes", s->survey_minutes);
+    RU("recon_grid", s->recon_grid);
+    RU("recon_step_hz", s->recon_step_hz);
+    RU("camp_freq_hz", s->camp_freq_hz);
     RU("auto_classify", s->auto_classify);
     RU("match_db", s->match_db);
     RU("notify", s->notify);
+    RU("custom_count", s->custom_count);
+    if(s->custom_count > CENSUS_CUSTOM_MAX) s->custom_count = CENSUS_CUSTOM_MAX;
+    if(s->custom_count > 0)
+        flipper_format_read_uint32(ff, "custom_freqs", s->custom_freqs, s->custom_count);
 #undef RU
 #undef RI
     furi_string_free(tmp);
@@ -279,6 +296,20 @@ bool census_place_delete(Storage* storage, const char* place_id) {
     return storage_simply_remove_recursive(storage, dir);
 }
 
+/* Read the `source` (column 4) of a watchlist line into src[cap]. */
+static void watchlist_row_source(const char* line, char* src, size_t cap) {
+    const char* p = line;
+    for(int col = 0; col < 4 && *p; col++) {
+        while(*p && *p != ',')
+            p++;
+        if(*p == ',') p++;
+    }
+    size_t j = 0;
+    while(*p && *p != ',' && *p != '\n' && *p != '\r' && j < cap - 1)
+        src[j++] = *p++;
+    src[j] = '\0';
+}
+
 size_t census_watchlist_freqs(Storage* storage, const char* place_id, uint32_t* out, size_t cap) {
     char path[160];
     census_place_file(place_id, "watchlist.csv", path, sizeof(path));
@@ -293,7 +324,11 @@ size_t census_watchlist_freqs(Storage* storage, const char* place_id, uint32_t* 
             if(c == '\n' || li >= sizeof(line) - 1) {
                 line[li] = '\0';
                 if(!header && li > 0) {
-                    out[n++] = (uint32_t)strtoul(line, NULL, 10); /* first column = freq_hz */
+                    char src[16];
+                    watchlist_row_source(line, src, sizeof(src));
+                    /* excluded entries are omitted from monitoring (§6 / System §9) */
+                    if(strcmp(src, "user-exclude") != 0)
+                        out[n++] = (uint32_t)strtoul(line, NULL, 10); /* col 0 = freq_hz */
                 }
                 header = false;
                 li = 0;
@@ -305,6 +340,243 @@ size_t census_watchlist_freqs(Storage* storage, const char* place_id, uint32_t* 
     storage_file_close(f);
     storage_file_free(f);
     return n;
+}
+
+bool census_watchlist_set_source(
+    Storage* storage,
+    const char* place_id,
+    uint32_t freq,
+    const char* source) {
+    char path[160];
+    census_place_file(place_id, "watchlist.csv", path, sizeof(path));
+
+    /* read all rows into a buffer, updating the matching freq's source (or note it's missing) */
+    char* buf = malloc(4096);
+    if(!buf) return false;
+    size_t out = 0;
+    bool found = false;
+    out += (size_t)snprintf(buf + out, 4096 - out, "%s\n", WATCHLIST_HEADER);
+
+    File* f = storage_file_alloc(storage);
+    if(storage_file_open(f, path, FSAM_READ, FSOM_OPEN_EXISTING)) {
+        char line[160];
+        size_t li = 0;
+        bool header = true;
+        char c;
+        while(storage_file_read(f, &c, 1) == 1) {
+            if(c == '\n' || li >= sizeof(line) - 1) {
+                line[li] = '\0';
+                if(!header && li > 0 && out < 4000) {
+                    uint32_t rf = (uint32_t)strtoul(line, NULL, 10);
+                    if(rf == freq) {
+                        found = true;
+                        /* rewrite this row keeping freq/mod/thr/occ, swapping source */
+                        char* p = line;
+                        char cols[4][24] = {{0}};
+                        for(int col = 0; col < 4; col++) {
+                            size_t j = 0;
+                            while(*p && *p != ',' && j < 23)
+                                cols[col][j++] = *p++;
+                            cols[col][j] = '\0';
+                            if(*p == ',') p++;
+                        }
+                        out += (size_t)snprintf(
+                            buf + out,
+                            4096 - out,
+                            "%s,%s,%s,%s,%s\n",
+                            cols[0],
+                            cols[1][0] ? cols[1] : "OOK",
+                            cols[2][0] ? cols[2] : "-80.0",
+                            cols[3][0] ? cols[3] : "0.0000",
+                            source);
+                    } else {
+                        out += (size_t)snprintf(buf + out, 4096 - out, "%s\n", line);
+                    }
+                }
+                header = false;
+                li = 0;
+            } else if(c != '\r') {
+                line[li++] = c;
+            }
+        }
+    }
+    storage_file_close(f);
+    storage_file_free(f);
+
+    if(!found && out < 3900) {
+        /* pinned/excluded a freq not in the watchlist -> add it (user-pin/exclude, §9) */
+        out += (size_t)snprintf(
+            buf + out, 4096 - out, "%lu,OOK,-80.0,0.0000,%s\n", (unsigned long)freq, source);
+    }
+
+    File* w = storage_file_alloc(storage);
+    bool ok = false;
+    if(storage_file_open(w, path, FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
+        ok = storage_file_write(w, buf, out) == out;
+    }
+    storage_file_close(w);
+    storage_file_free(w);
+    free(buf);
+    return ok;
+}
+
+/* Copy comma-field #idx of `line` (up to a newline) into dst[cap]. */
+static void csv_field(const char* line, int idx, char* dst, size_t cap) {
+    const char* p = line;
+    for(int i = 0; i < idx; i++) {
+        while(*p && *p != ',' && *p != '\n')
+            p++;
+        if(*p == ',') p++;
+    }
+    const char* e = p;
+    while(*e && *e != ',' && *e != '\n' && *e != '\r')
+        e++;
+    size_t n = (size_t)(e - p);
+    if(n >= cap) n = cap - 1;
+    memcpy(dst, p, n);
+    dst[n] = '\0';
+}
+
+bool census_log_set_label(
+    Storage* storage,
+    const char* place_id,
+    const char* sub_file,
+    const char* label) {
+    char path[160], tmp[176];
+    census_place_file(place_id, "census_log.csv", path, sizeof(path));
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+
+    File* in = storage_file_alloc(storage);
+    File* out = storage_file_alloc(storage);
+    bool updated = false;
+    bool ok_open = storage_file_open(in, path, FSAM_READ, FSOM_OPEN_EXISTING) &&
+                   storage_file_open(out, tmp, FSAM_WRITE, FSOM_CREATE_ALWAYS);
+    if(ok_open) {
+        char line[256];
+        size_t li = 0;
+        bool header = true;
+        char c;
+        for(;;) {
+            int got = storage_file_read(in, &c, 1);
+            bool eol = (got == 1 && (c == '\n')) || li >= sizeof(line) - 1;
+            if(got == 1 && !eol) {
+                if(c != '\r') line[li++] = c;
+                continue;
+            }
+            line[li] = '\0';
+            if(li > 0) {
+                if(header) {
+                    storage_file_write(out, line, strlen(line));
+                    storage_file_write(out, "\n", 1);
+                    header = false;
+                } else {
+                    /* census_log: sub_file is col 12, label is col 13 (last) */
+                    char sub[80];
+                    csv_field(line, 12, sub, sizeof(sub));
+                    char row[288];
+                    if(strcmp(sub, sub_file) == 0) {
+                        /* rebuild the row keeping cols 0..12, replacing col 13 with label */
+                        size_t w = 0;
+                        const char* p = line;
+                        int col = 0;
+                        while(col < 13) {
+                            char fld[80];
+                            csv_field(line, col, fld, sizeof(fld));
+                            w += (size_t)snprintf(
+                                row + w, sizeof(row) - w, "%s%s", col ? "," : "", fld);
+                            col++;
+                            (void)p;
+                        }
+                        w += (size_t)snprintf(row + w, sizeof(row) - w, ",%s\n", label);
+                        storage_file_write(out, row, w);
+                        updated = true;
+                    } else {
+                        storage_file_write(out, line, strlen(line));
+                        storage_file_write(out, "\n", 1);
+                    }
+                }
+            }
+            li = 0;
+            if(got != 1) break;
+        }
+    }
+    storage_file_close(in);
+    storage_file_free(in);
+    storage_file_close(out);
+    storage_file_free(out);
+
+    if(updated) {
+        storage_simply_remove(storage, path);
+        storage_common_rename(storage, tmp, path);
+    } else {
+        storage_simply_remove(storage, tmp);
+    }
+    return updated;
+}
+
+uint32_t census_watchlist_busiest(Storage* storage, const char* place_id) {
+    char path[160];
+    census_place_file(place_id, "watchlist.csv", path, sizeof(path));
+    File* f = storage_file_alloc(storage);
+    uint32_t best_freq = 0;
+    float best_occ = -1.0f;
+    if(storage_file_open(f, path, FSAM_READ, FSOM_OPEN_EXISTING)) {
+        char line[128];
+        size_t li = 0;
+        bool header = true;
+        char c;
+        while(storage_file_read(f, &c, 1) == 1) {
+            if(c == '\n' || li >= sizeof(line) - 1) {
+                line[li] = '\0';
+                if(!header && li > 0) {
+                    /* freq_hz,modulation,threshold_dbm,occupancy,source */
+                    char* p = line;
+                    uint32_t freq = (uint32_t)strtoul(p, &p, 10);
+                    for(int col = 0; col < 3 && *p; col++) {
+                        while(*p && *p != ',')
+                            p++;
+                        if(*p == ',') p++;
+                    }
+                    float occ = strtof(p, &p);
+                    if(*p == ',') p++;
+                    /* skip excluded entries (§6) */
+                    if(strncmp(p, "user-exclude", 12) != 0 && occ > best_occ) {
+                        best_occ = occ;
+                        best_freq = freq;
+                    }
+                }
+                header = false;
+                li = 0;
+            } else if(c != '\r') {
+                line[li++] = c;
+            }
+        }
+    }
+    storage_file_close(f);
+    storage_file_free(f);
+    return best_freq;
+}
+
+/* --- SD health (§6.1) --- */
+#define CENSUS_SD_LOW_BYTES (2u * 1024u * 1024u) /* stop writing captures below 2 MiB free */
+
+bool census_sd_present(Storage* storage) {
+    return storage_sd_status(storage) == FSE_OK;
+}
+
+bool census_sd_space(Storage* storage, uint64_t* free_bytes, uint64_t* total_bytes) {
+    uint64_t total = 0, freeb = 0;
+    FS_Error e = storage_common_fs_info(storage, STORAGE_EXT_PATH_PREFIX, &total, &freeb);
+    if(e != FSE_OK) return false;
+    if(total_bytes) *total_bytes = total;
+    if(free_bytes) *free_bytes = freeb;
+    return true;
+}
+
+bool census_sd_low(Storage* storage) {
+    uint64_t freeb = 0;
+    if(!census_sd_space(storage, &freeb, NULL)) return true; /* no card == can't write */
+    return freeb < CENSUS_SD_LOW_BYTES;
 }
 
 bool census_storage_init(Storage* storage, CensusSettings* s) {

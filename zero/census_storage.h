@@ -17,12 +17,21 @@
 #define CENSUS_PLACE_ID_LEN   40
 #define CENSUS_PLACE_NAME_LEN 32
 #define CENSUS_MAX_PLACES     32
+#define CENSUS_CUSTOM_MAX     16 /* custom frequency-list capacity (§4 Custom preset) */
 
 typedef enum {
     CensusModeRecon = 0,
     CensusModeSweep = 1,
     CensusModeCamp = 2,
 } CensusMode;
+
+/* Recon Stage A grid selection (§3.3 / §4). */
+typedef enum {
+    CensusReconGridHybrid = 0, /* known channels + coarse background (default) */
+    CensusReconGridKnown = 1, /* known common channels only */
+    CensusReconGridFull = 2, /* full coarse background across all segments */
+    CensusReconGridCount = 3,
+} CensusReconGrid;
 
 typedef enum {
     CensusCaptureOok650 = 0,
@@ -52,9 +61,14 @@ typedef struct {
     uint32_t signal_end_gap_ms;
     uint32_t min_gap_ms;
     uint16_t survey_minutes;
+    uint8_t recon_grid; /* CensusReconGrid (§3.3 Stage A) */
+    uint32_t recon_step_hz; /* coarse background grid step / RX BW (§4) */
+    uint32_t camp_freq_hz; /* Camp default frequency; 0 = Auto (busiest watchlist) (§3.2) */
     bool auto_classify;
     bool match_db;
     uint8_t notify; /* CensusNotify */
+    uint8_t custom_count; /* Custom preset list length (§4) */
+    uint32_t custom_freqs[CENSUS_CUSTOM_MAX];
 } CensusSettings;
 
 void census_settings_set_defaults(CensusSettings* s);
@@ -91,5 +105,33 @@ void census_place_file(const char* place_id, const char* filename, char* out, si
 /* Load watchlist frequencies (freq_hz column) for a place into out[cap]; returns the count.
  * 0 if the watchlist is absent/empty (Sweep then falls back to the preset list, System §9). */
 size_t census_watchlist_freqs(Storage* storage, const char* place_id, uint32_t* out, size_t cap);
+
+/* The busiest watchlist entry (highest occupancy) for Camp Auto (§3.2). 0 if no watchlist. */
+uint32_t census_watchlist_busiest(Storage* storage, const char* place_id);
+
+/* Set the `source` column of the watchlist entry at `freq` to `source` ("user-pin" /
+ * "user-exclude" / "recon"), inserting a row if `freq` isn't present (Recon results Pin/Exclude,
+ * §6 / System §9). Returns true on success. */
+bool census_watchlist_set_source(
+    Storage* storage,
+    const char* place_id,
+    uint32_t freq,
+    const char* source);
+
+/* Rewrite the `label` column (in place) of the census_log row whose sub_file matches (Zero §6
+ * Review label picker). Returns true if a matching row was updated. */
+bool census_log_set_label(
+    Storage* storage,
+    const char* place_id,
+    const char* sub_file,
+    const char* label);
+
+/* --- SD health (§6.1) --- */
+/* True if /ext (the SD card) is mounted and the app base dir is usable. */
+bool census_sd_present(Storage* storage);
+/* Free/total bytes on /ext. Returns false if the card is absent. */
+bool census_sd_space(Storage* storage, uint64_t* free_bytes, uint64_t* total_bytes);
+/* True when free space is below the low-space cutoff (stop writing captures, §6.1 SD full). */
+bool census_sd_low(Storage* storage);
 
 #endif /* CENSUS_STORAGE_H */

@@ -84,6 +84,41 @@ def test_parse_candidates():
     assert c[0]["class"] == "remote" and c[0]["source"] == "fingerprint"
 
 
+# what /api/fieldmap serves (mirrors esp_fieldmap_to_json in src/esp_fieldmap.c — the passive
+# differential overlay + named checksum; fields round-trip to shared/core ScField)
+FIELDMAP = (
+    '{"signature":"acurite:0x1234","nbits":32,"n_bytes":4,"modulation":0,"user_confirmed":false,'
+    '"fields":[{"name":"byte0","start_bit":0,"length":8,"class":"static","semantics":null},'
+    '{"name":"byte1","start_bit":8,"length":8,"class":"counter","semantics":null},'
+    '{"name":"byte2","start_bit":16,"length":8,"class":"slow","semantics":"tracks temperature"},'
+    '{"name":"byte3","start_bit":24,"length":8,"class":"checksum","semantics":null}],'
+    '"checksum":{"kind":"xor","poly":0,"init":0,"gen":0,"key":0,"over_bytes":3},'
+    '"confidence":0.700,"reasoning":"4 byte-segments; PROPOSAL - passive (no TX)."}'
+)
+
+
+def test_parse_fieldmap():
+    fm = esp_web.parse_fieldmap(FIELDMAP)
+    assert fm["signature"] == "acurite:0x1234"
+    assert fm["user_confirmed"] is False  # a proposal, never auto-committed (System §7b)
+    assert [f["class"] for f in fm["fields"]] == ["static", "counter", "slow", "checksum"]
+    assert fm["checksum"]["kind"] == "xor"
+    assert fm["fields"][2]["semantics"] == "tracks temperature"
+
+
+def test_parse_fieldmap_rejects_bad_class():
+    bad = FIELDMAP.replace('"class":"static"', '"class":"bogus"')
+    with pytest.raises(ValueError):
+        esp_web.parse_fieldmap(bad)
+
+
+def test_parse_fieldmap_no_checksum():
+    fm = esp_web.parse_fieldmap(FIELDMAP.replace(
+        '"checksum":{"kind":"xor","poly":0,"init":0,"gen":0,"key":0,"over_bytes":3}',
+        '"checksum":null'))
+    assert fm["checksum"] is None
+
+
 def test_parse_ws_capture():
     m = esp_web.parse_ws_capture(WS_MSG)
     assert m["freq_hz"] == 433920000

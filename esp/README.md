@@ -73,14 +73,17 @@ live WiFi/MQTT/OTA, and browser rendering are on-device steps (`TODO(hw)`).
 
 ## Status
 
-**All milestones complete (M1–M8):**
+**All milestones complete (M1–M8), spec-delta zero:**
 - **M1** skeleton (WiFi/NTP/web/CC1101/settings/place) · **M2** RMT capture + Camp + census_log +
-  rotation + WebSocket feed · **M3** Recon+Sweep → occupancy/watchlist · **M4** classification
-  (feature vector + gated k-NN) + confirm-appends-fingerprint · **M5** web UI complete ·
-  **M6** SD auto-detect → full per-place folder model (LittleFS fallback with rotation) ·
-  **M7** MQTT/HA discovery + brain sync + OTA · **M8** replay + edit-before-transmit
-  (CC1101 TX; opt-in, TX-allow-list gated, single-frame; field-map heavy crunch defers to the
-  host tools, System §8).
+  rotation + WebSocket feed · **M3** Recon+Sweep → occupancy/watchlist (**accumulate/fresh + user
+  pin/exclude preservation**, System §9) · **M4** classification (feature vector + gated k-NN) +
+  confirm-appends-fingerprint · **M5** web UI complete · **M6** SD auto-detect → full per-place
+  folder model (LittleFS fallback with rotation) · **M7** MQTT/HA discovery + brain sync + OTA ·
+  **M8** replay + edit-before-transmit + **in-browser field-map discovery** (CC1101 TX; opt-in,
+  TX-allow-list gated, single-frame): passive differential overlay + segment labeling
+  (`sc_diff`/`sc_fieldmap`), corpus checksum discovery, confirm-write a `field_maps/*.fmap` entry,
+  checksum re-sign, and guarded own-device active confirmation via `/api/fieldmap/tx`.
 
-Live radio (RMT capture, CC1101 RSSI/TX), live WiFi/MQTT/OTA, SD reads, and browser rendering
-are on-device steps (`TODO(hw)`); everything upstream is covered by native + web-driver tests.
+Tested with **11 native (`zig cc`) + 10 web-driver** tests; `pio run` compiles clean (79.6%
+flash). Live radio (RMT capture, CC1101 RSSI/TX), live WiFi/MQTT/OTA, and SD reads are on-device
+steps (`TODO(hw)`); everything upstream is covered by the native + web-driver tests.

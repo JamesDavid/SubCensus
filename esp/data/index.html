@@ -28,6 +28,7 @@
       <button data-tab="feed" class="active">Live</button>
       <button data-tab="review">Review</button>
       <button data-tab="bands">Bands</button>
+      <button data-tab="fieldmap">Field-map</button>
       <button data-tab="places">Places</button>
       <button data-tab="settings">Settings</button>
     </nav>
@@ -41,10 +42,41 @@
     </section>
 
     <section id="bands"><h2>Bands</h2>
-      <button class="act" onclick="recon('fixture')">Run (demo)</button>
-      <button class="act warn" onclick="recon('reset')">Reset</button>
+      <button class="act" onclick="recon('fixture','accumulate')">Run (accumulate)</button>
+      <button class="act" onclick="recon('fixture','fresh')">Run (fresh)</button>
+      <button class="act warn" onclick="recon('reset','keep')">Reset (keep pins)</button>
+      <button class="act warn" onclick="recon('reset','wipe')">Reset (wipe pins)</button>
       <h3>Occupancy</h3><table id="occ"></table>
       <h3>Watchlist</h3><table id="wl"></table>
+    </section>
+
+    <section id="fieldmap"><h2>Field-map discovery (System §7b)</h2>
+      <p class="muted">Passive differential overlay + segment labeling on an unknown, ON-DEVICE
+        (sc_diff + sc_crc). Paste an aligned corpus (many captures of one device), one hex frame
+        per line. No transmission. A confirmed structure is proposed as a field_maps/ entry
+        (never auto-committed).</p>
+      <div class="field"><label>Signature</label><input id="fm-sig" placeholder="e.g. acurite:0x1234" size="24"></div>
+      <div class="field"><label>From captures</label><input id="fm-subs" size="40"
+        placeholder="captures/a.sub, captures/b.sub (sliced on-device)"></div>
+      <div class="field"><label>…or frames (hex)</label></div>
+      <textarea id="fm-frames" rows="5" style="width:100%;background:#0f1115;color:#e6e6e6;border:1px solid #2a2f3a;border-radius:4px;font-family:monospace;font-size:12px"
+        placeholder="A5 00 10 B5&#10;A5 01 10 B4&#10;A5 02 11 B6"></textarea>
+      <div class="field"><button class="act" onclick="fmAnalyze()">Analyze</button>
+        <button class="act" onclick="fmConfirm()" id="fm-confirm" disabled>Confirm → field_maps/</button>
+        <span class="muted" id="fm-conf"></span></div>
+      <table id="fm-table"></table>
+      <p class="muted" id="fm-reason"></p>
+      <h3>Active confirmation (own device)</h3>
+      <p class="muted">Edit a field, re-sign the checksum, and transmit ONE frame to your own
+        device to watch it react. TX-allow-list gated, single-frame, off by default (Settings →
+        TX enabled). Live CC1101 transmit is on-device.</p>
+      <div class="field"><label>Frame (hex)</label><input id="fm-edit" size="24" placeholder="A5 02 11 00"></div>
+      <div class="field"><label>Checksum</label>
+        <select id="fm-kind"><option value="xor">xor</option><option value="sum">sum</option>
+          <option value="crc8">crc8</option><option value="crc8le">crc8le</option><option value="lfsr8">lfsr8</option></select>
+        <button class="act" onclick="fmResign()">Re-sign</button>
+        <button class="act warn" onclick="fmTx()">Transmit 1 frame</button>
+        <span class="muted" id="fm-signed"></span></div>
     </section>
 
     <section id="places"><h2>Places</h2>
@@ -124,8 +156,8 @@
         t.appendChild(tr);
       });
     }
-    function recon(action) {
-      const fd = new FormData(); fd.append('action', action);
+    function recon(action, mode) {
+      const fd = new FormData(); fd.append('action', action); if (mode) fd.append('mode', mode);
       api('/api/recon', { method: 'POST', body: fd }).then(loadBands);
     }
 
@@ -145,10 +177,74 @@
     function createPlace() { const n = $('#newplace').value; if (n) place('create', { name: n }).then(() => { status(); loadPlaces(); }); }
     function switchPlace(id) { place('switch', { id }).then(() => { status(); loadPlaces(); }); }
 
+    // --- Field-map discovery / edit (System §7b) ---
+    const FM_CLASSES = ['static', 'slow', 'counter', 'checksum', 'data'];
+    let fmLast = null; // last proposal, for confirm
+    function fmForm() {
+      const fd = new FormData();
+      if ($('#fm-subs').value.trim()) fd.append('subs', $('#fm-subs').value);
+      else fd.append('frames', $('#fm-frames').value);
+      fd.append('signature', $('#fm-sig').value || 'unknown');
+      (fmLast ? fmLast.fields : []).forEach((f, i) => {
+        const nm = $('#fm-n' + i), sm = $('#fm-s' + i), cl = $('#fm-c' + i);
+        if (nm) fd.append('name' + i, nm.value);
+        if (sm) fd.append('sem' + i, sm.value);
+        if (cl) fd.append('cls' + i, cl.value);
+      });
+      return fd;
+    }
+    function fmRender(j) {
+      fmLast = j;
+      $('#fm-conf').textContent = 'confidence ' + j.confidence + (j.checksum ? ' · checksum ' + j.checksum.kind : '');
+      $('#fm-reason').textContent = j.reasoning || '';
+      const t = $('#fm-table');
+      t.innerHTML = '<tr><th>Segment</th><th>bits</th><th>class</th><th>name</th><th>semantics</th></tr>' +
+        j.fields.map((f, i) =>
+          '<tr><td><code>' + f.start_bit + '..' + (f.start_bit + f.length) + '</code></td>' +
+          '<td>' + f.length + '</td>' +
+          '<td><select id="fm-c' + i + '">' + FM_CLASSES.map(c =>
+            '<option' + (c === f.class ? ' selected' : '') + '>' + c + '</option>').join('') + '</select></td>' +
+          '<td><input id="fm-n' + i + '" value="' + (f.name || '') + '" size=10></td>' +
+          '<td><input id="fm-s' + i + '" value="' + (f.semantics || '') + '" size=16></td></tr>'
+        ).join('');
+      $('#fm-confirm').disabled = false;
+    }
+    function fmAnalyze() {
+      api('/api/fieldmap', { method: 'POST', body: fmForm() }).then(fmRender)
+        .catch(async r => alert('analyze: ' + (r.status ? (await r.json().catch(() => ({}))).error || r.status : r)));
+    }
+    function fmConfirm() {
+      if (!fmLast) return;
+      api('/api/fieldmap/confirm', { method: 'POST', body: fmForm() })
+        .then(j => { fmRender(j); alert('field_maps/ entry written (user-confirmed)'); });
+    }
+    function fmResign() {
+      const fd = new FormData();
+      fd.append('frame', $('#fm-edit').value); fd.append('kind', $('#fm-kind').value);
+      api('/api/fieldmap/resign', { method: 'POST', body: fd })
+        .then(j => { $('#fm-edit').value = j.frame; $('#fm-signed').textContent = 're-signed · check 0x' + j.check.toString(16); })
+        .catch(async r => alert('resign: ' + (r.status || r)));
+    }
+    function fmTx() {
+      if (!confirm('Transmit ONE frame to your own device? (TX must be enabled; own-device only)')) return;
+      const fd = new FormData();
+      fd.append('frame', $('#fm-edit').value);
+      api('/api/fieldmap/tx', { method: 'POST', body: fd })
+        .then(j => $('#fm-signed').textContent = 'tx ok=' + j.ok + ' @ ' + (j.freq_hz / 1e6).toFixed(2) + ' MHz')
+        .catch(async r => { const e = await r.json().catch(() => ({})); alert('tx blocked: ' + (e.error || e.note || r.status)); });
+    }
+
     const SETTINGS = [
-      ['mode', 'Mode', ['Recon', 'Sweep', 'Camp']], ['capture_preset', 'Capture', ['OOK650', 'OOK270', '2-FSK', 'Dual']],
-      ['rssi_auto', 'RSSI auto', 'bool'], ['dwell_ms', 'Dwell ms', 'num'], ['survey_minutes', 'Survey min', 'num'],
-      ['auto_classify', 'Auto-classify', 'bool'], ['match_db', 'Match DB', 'bool'], ['tx_enabled', 'TX enabled', 'bool'],
+      ['mode', 'Mode', ['Recon', 'Sweep', 'Camp']],
+      ['freq_preset', 'Freq list', ['315 MHz', '390 MHz', '433.92 MHz', '915 MHz']],
+      ['capture_preset', 'Capture', ['OOK650', 'OOK270', '2-FSK', 'Dual']],
+      ['use_watchlist', 'Use watchlist', 'bool'], ['rssi_auto', 'RSSI auto', 'bool'],
+      ['rssi_threshold', 'RSSI thresh (dBm)', 'num'], ['dwell_ms', 'Dwell ms', 'num'],
+      ['capture_max_ms', 'Capture max ms', 'num'], ['survey_minutes', 'Survey min', 'num'],
+      ['auto_classify', 'Auto-classify', 'bool'], ['match_db', 'Match DB', 'bool'],
+      ['tx_enabled', 'TX enabled', 'bool'],
+      ['wifi_ssid', 'WiFi SSID', 'text'], ['wifi_pass', 'WiFi password', 'pass'],
+      ['mqtt_enabled', 'MQTT enabled', 'bool'], ['mqtt_host', 'MQTT host', 'text'],
     ];
     function loadSettings() {
       api('/api/settings').then(j => {
@@ -156,7 +252,8 @@
           let ctl;
           if (kind === 'bool') ctl = '<input type=checkbox name=' + k + (j[k] ? ' checked' : '') + '>';
           else if (Array.isArray(kind)) ctl = '<select name=' + k + '>' + kind.map((o, i) => '<option value=' + i + (j[k] == i ? ' selected' : '') + '>' + o + '</option>').join('') + '</select>';
-          else ctl = '<input name=' + k + ' value="' + j[k] + '">';
+          else if (kind === 'pass') ctl = '<input type=password name=' + k + ' placeholder="(unchanged)">';
+          else ctl = '<input name=' + k + ' value="' + (j[k] != null ? j[k] : '') + '">';
           return '<div class="field"><label>' + lbl + '</label>' + ctl + '</div>';
         }).join('');
       });
@@ -166,6 +263,7 @@
       SETTINGS.forEach(([k, , kind]) => {
         const el = $('#setform [name=' + k + ']');
         if (!el) return;
+        if (kind === 'pass' && !el.value) return; // don't clobber the stored password with blank
         fd.append(k, kind === 'bool' ? (el.checked ? '1' : '0') : el.value);
       });
       api('/api/settings', { method: 'POST', body: fd }).then(() => alert('saved'));

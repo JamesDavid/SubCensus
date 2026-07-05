@@ -16,15 +16,21 @@
 #include <storage/storage.h>
 
 #include "../shared/core/sc_feature.h"
+#include "../shared/core/sc_fieldmap.h"
+#include "../shared/core/sc_slice.h"
 #include "census_brain.h"
 #include "census_camp_view.h"
+#include "census_edit.h"
+#include "census_editor_view.h"
 #include "census_freq.h"
 #include "census_recon.h"
+#include "census_spectrum_view.h"
 #include "census_storage.h"
 #include "census_worker.h"
 #include "scenes/subcensus_scene.h"
 
-#define CENSUS_REVIEW_MAX 64
+#define CENSUS_REVIEW_MAX    64
+#define CENSUS_EDIT_MAXBYTES 64
 
 typedef enum {
     SubCensusViewSubmenu,
@@ -34,12 +40,23 @@ typedef enum {
     SubCensusViewDialogEx,
     SubCensusViewPopup,
     SubCensusViewCamp,
+    SubCensusViewSpectrum,
+    SubCensusViewEditor,
 } SubCensusView;
 
 typedef enum {
     SubCensusTextModeNewPlace = 0,
     SubCensusTextModeRenamePlace = 1,
+    SubCensusTextModeManualFreqCustom = 2, /* manual MHz -> add to custom list (§6) */
+    SubCensusTextModeManualFreqCamp = 3, /* manual MHz -> camp here (§6) */
 } SubCensusTextMode;
+
+/* Edit-before-transmit / field-map discovery mode (M10, §6/§7b). */
+typedef enum {
+    SubCensusEditRaw = 0, /* raw bit/hex edit of any capture */
+    SubCensusEditFields = 1, /* structured field editor (protocol known) */
+    SubCensusEditDiscovery = 2, /* differential-seeded field-map discovery on unknowns */
+} SubCensusEditMode;
 
 typedef struct {
     Gui* gui;
@@ -55,13 +72,34 @@ typedef struct {
     DialogEx* dialog_ex;
     Popup* popup;
     CensusCampView* camp_view;
+    CensusEditorView* editor_view;
 
     CensusWorker* worker;
     CensusRecon* recon;
+    CensusSpectrumView* spectrum_view;
     FuriTimer* live_timer;
     uint32_t camp_freq;
     bool live_sweep;
     bool recon_fresh;
+
+    /* Recon results per-entry actions (§6): the selected watchlist entry. */
+    uint32_t recon_sel_freq;
+    char recon_sel_mod[8];
+
+    /* Edit-before-transmit / field-map discovery (M10, §6/§7b). Loaded from a capture's .sub;
+     * sliced to a bit frame (sc_slice) that the raw/structured/discovery editors operate on. */
+    uint8_t edit_mode; /* SubCensusEditMode */
+    uint8_t edit_frame[CENSUS_EDIT_MAXBYTES];
+    size_t edit_nbits;
+    int32_t edit_unit_us; /* slice unit = shortest dominant symbol (sc_feature) */
+    uint32_t edit_freq;
+    char edit_preset[24];
+    char edit_protocol[24]; /* known protocol (brain/decoder) or "unknown" */
+    ScFieldMap edit_map; /* labeled fields + checksum (structured/discovery) */
+    bool edit_has_map;
+    size_t edit_sel; /* selected field/byte/segment index */
+    bool edit_dirty; /* edited since load (blocks a stale re-decode) */
+    bool edit_from_tx; /* the pending TX frame is an edited frame (log distinctly, §6) */
 
     /* Review state */
     char review_subs[CENSUS_REVIEW_MAX][80];
@@ -69,6 +107,9 @@ typedef struct {
     size_t review_count;
     size_t review_sel;
     ScFeatureVector review_fv;
+    char review_cand_class[24]; /* top k-NN candidate device_class ("" if none) — Label "Accept" */
+    char review_cand_name[24]; /* top candidate device_name (for the Accept label) */
+    uint32_t review_jump_freq; /* preselect this freq's newest row in Review (live-list jump, §6) */
 
     CensusSettings settings;
 

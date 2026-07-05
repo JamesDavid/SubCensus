@@ -119,6 +119,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="fingerprint CSVs to merge (Zero place folders and/or Pi exports)")
     ap.add_argument("--protocol-map", nargs="*", default=[],
                     help="extra protocol_map CSVs to merge in")
+    ap.add_argument("--places", nargs="*", default=[],
+                    help="place folders to run passive field-map discovery over (System §7b/§8)")
     ap.add_argument("--no-seed", action="store_true", help="don't add the curated protocol_map seed")
     args = ap.parse_args(argv)
 
@@ -143,7 +145,18 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"protocol_map: {len(protocol_map)} rows -> {pm_path}")
     print(f"fingerprints: {len(fingerprints)} rows -> {fp_path}")
-    print("field_maps: proposed only, never auto-committed (System §7b) — TODO(M9 differential)")
+
+    # field_maps: passive differential + checksum discovery over each place's capture corpus
+    # (System §7b/§8). PROPOSES `.fmap` entries (source=proposed) — never auto-committed.
+    from subcensus_tools import fieldmap
+    proposals = []
+    for pd in args.places:
+        proposals += fieldmap.discover_place(Path(pd))
+    if proposals:
+        written = fieldmap.write_proposals(sig, proposals)
+        print(f"field_maps: {len(written)} proposed (source=proposed, user confirms) -> {sig / 'field_maps'}")
+    else:
+        print("field_maps: none proposed (need >=2 same-freq captures per device; System §7b)")
     return 0
 
 

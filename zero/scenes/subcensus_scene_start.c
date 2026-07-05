@@ -46,6 +46,13 @@ bool subcensus_scene_start_on_event(void* context, SceneManagerEvent event) {
     SubCensusApp* app = context;
     if(event.type == SceneManagerEventTypeCustom) {
         scene_manager_set_scene_state(app->scene_manager, SubCensusSceneStart, event.event);
+        /* monitoring writes to /ext — if the card vanished, block until it's back (§6.1) */
+        bool needs_sd = event.event == StartItemRunRecon || event.event == StartItemSweep ||
+                        event.event == StartItemCamp;
+        if(needs_sd && !census_sd_present(app->storage)) {
+            scene_manager_next_scene(app->scene_manager, SubCensusSceneSdRequired);
+            return true;
+        }
         switch(event.event) {
         case StartItemPlace:
             scene_manager_next_scene(app->scene_manager, SubCensusScenePlaces);

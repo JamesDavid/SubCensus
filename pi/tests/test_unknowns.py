@@ -85,3 +85,57 @@ def test_review_queue_api(db, fixtures_dir, tmp_path):
     assert client.delete(f"/api/unknown/{uid}").status_code == 200
     assert client.get("/api/unknowns").json() == []
     assert client.delete(f"/api/unknown/{uid}").status_code == 404
+
+
+def test_review_queue_renders_in_dashboard(db, fixtures_dir, tmp_path):
+    Collector(db, place="home", capture_unknowns=True).process_stream(
+        replay_file(fixtures_dir / "rtl433" / "home_stream.jsonl")
+    )
+    db.close()
+    client = TestClient(create_app(str(tmp_path / "census.db")))
+    html = client.get("/").text
+    assert "Unknowns" in html  # §6/§7 review-queue section rendered
+    assert "play / inspect" in html  # inspect link present
+
+
+def test_unknown_inspect_and_iq_download(db, fixtures_dir, tmp_path):
+    Collector(db, place="home", capture_unknowns=True).process_stream(
+        replay_file(fixtures_dir / "rtl433" / "home_stream.jsonl")
+    )
+    uid = db.list_unknowns()[0]["id"]
+    db.close()
+    client = TestClient(create_app(str(tmp_path / "census.db")))
+
+    # inspect: pulse summary present; no recorded IQ yet -> live capture is TODO(hw)
+    j = client.get(f"/api/unknown/{uid}/inspect").json()
+    assert j["id"] == uid
+    assert j["freq_hz"] == 433920000
+    assert j["pulse_summary"]["mod"] == "ASK"
+    assert j["iq_available"] is False
+    assert j["download_url"] is None
+    # download with no recorded sample -> 404 flagging the hardware boundary
+    r = client.get(f"/api/unknown/{uid}/iq")
+    assert r.status_code == 404 and "TODO(hw)" in r.json()["detail"]
+    assert client.get("/api/unknown/9999/inspect").status_code == 404
+
+
+def test_unknown_iq_download_with_recorded_sample(tmp_path):
+    # Simulate an on-device capture having saved a .cu8 snippet (the RF/physics side); the
+    # inspect+download path over that RECORDED sample is fully off-device (RF boundary).
+    iq = tmp_path / "iq"
+    iq.mkdir()
+    sample = iq / "unk_433920000.cu8"
+    sample.write_bytes(b"\x7f\x81" * 512)
+    db = Database(tmp_path / "census.db")
+    uid = db.insert_unknown(ts="2026-07-04T12:00:30", place="home", freq_hz=433920000,
+                            source="hop", iq_path=str(sample), pulse_summary='{"mod":"ASK"}')
+    db.close()
+    client = TestClient(create_app(str(tmp_path / "census.db")))
+
+    j = client.get(f"/api/unknown/{uid}/inspect").json()
+    assert j["iq_available"] is True
+    assert j["iq_bytes"] == 1024
+    assert j["download_url"] == f"/api/unknown/{uid}/iq"
+    r = client.get(f"/api/unknown/{uid}/iq")
+    assert r.status_code == 200
+    assert r.content == b"\x7f\x81" * 512

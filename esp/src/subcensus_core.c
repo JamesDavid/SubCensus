@@ -20,3 +20,5 @@
 #include "../../shared/core/sc_knn.c"
 #include "../../shared/core/sc_occupancy.c"
 #include "../../shared/core/sc_diff.c"
+#include "../../shared/core/sc_fieldmap.c"
+#include "../../shared/core/sc_slice.c"

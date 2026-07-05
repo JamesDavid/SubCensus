@@ -83,3 +83,38 @@ def test_bands_api(sweep, tmp_path):
     assert client.post("/api/watchlist/pin", data={"freq_hz": 433970000, "action": "pin", "place": "home"}).status_code == 200
     assert client.post("/api/recon/reset", data={"place": "home", "keep_pins": "true"}).status_code == 200
     assert client.get("/api/occupancy").json() == []
+
+
+def test_bands_render_in_dashboard(sweep, tmp_path):
+    places_dir = tmp_path / "places"
+    op.run_pass_to_place(sweep, places_dir / "home")
+    client = TestClient(create_app(str(tmp_path / "census.db"), place="home", places_dir=str(places_dir)))
+    html = client.get("/").text
+    assert "Bands" in html                       # §7 occupancy/watchlist section rendered
+    assert "Run (Accumulate)" in html            # recon controls present
+    assert "Run (Fresh)" in html
+    assert "Reset (keep pins)" in html
+    assert "433.970 MHz" in html                 # a hot bin shown in the heatmap table
+
+
+def test_recon_run_from_recorded_sweep(sweep, tmp_path):
+    """Run control (Accumulate default / Fresh) driven from a RECORDED rtl_power sweep — the
+    processing path off-device. A live sweep needs a dongle (TODO(hw))."""
+    places_dir = tmp_path / "places"
+    client = TestClient(create_app(str(tmp_path / "census.db"), place="home", places_dir=str(places_dir)))
+
+    # a live sweep (no recorded csv) is the hardware boundary -> 501 TODO(hw)
+    r = client.post("/api/recon/run", data={"place": "home", "mode": "accumulate"})
+    assert r.status_code == 501 and "TODO(hw)" in r.json()["detail"]
+
+    # fresh run from the recorded sweep writes occupancy/watchlist artifacts
+    r = client.post("/api/recon/run", data={"place": "home", "mode": "fresh", "rtl_power_csv": str(sweep)})
+    assert r.status_code == 200 and r.json()["ok"] and r.json()["bins"] > 0
+    assert any(b["freq_hz"] == 433970000 for b in client.get("/api/occupancy").json())
+
+    # accumulate merges into the existing pass
+    r = client.post("/api/recon/run", data={"place": "home", "mode": "accumulate", "rtl_power_csv": str(sweep)})
+    assert r.status_code == 200 and r.json()["mode"] == "accumulate"
+
+    # bad mode rejected
+    assert client.post("/api/recon/run", data={"place": "home", "mode": "nope", "rtl_power_csv": str(sweep)}).status_code == 400

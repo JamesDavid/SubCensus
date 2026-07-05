@@ -23,4 +23,14 @@ int esp_watchlist_row(const ScWatchlistEntry* e, const char* source, char* out, 
  * occupancy). Returns true on success. Used by Sweep/Camp to consume the watchlist. */
 bool esp_watchlist_parse_line(const char* line, ScWatchlistEntry* out);
 
+/* Read the `source` column (field 5: recon | user-pin | user-exclude) of a watchlist.csv row into
+ * dst[cap]. Returns true on success. Lets Recon preserve user pins/exclusions across re-runs and
+ * Reset (System §9). */
+bool esp_watchlist_parse_source(const char* line, char* dst, size_t cap);
+
+/* Parse an occupancy.csv DATA row into *out (freq/noise_floor/peak_rssi/occupancy/crossings;
+ * last_seen is left 0 — the ISO wall-clock isn't needed for the accumulate merge). Returns true
+ * on success. Used to read back the prior pass for cumulative Recon (System §9 accumulate). */
+bool esp_occupancy_parse_line(const char* line, ScOccupancyBin* out);
+
 #endif /* ESP_OCCUPANCY_CSV_H */

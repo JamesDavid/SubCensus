@@ -25,6 +25,7 @@ extern "C" {
 #include "esp_capture.h"
 #include "census_taxonomy.h"
 #include "esp_census_log.h"
+#include "esp_fieldmap.h"
 #include "esp_fingerprints.h"
 #include "esp_mqtt.h"
 #include "esp_occupancy_csv.h"
@@ -37,6 +38,7 @@ extern "C" {
 #include "sc_feature.h"
 #include "sc_knn.h"
 #include "sc_occupancy.h"
+#include "sc_slice.h"
 #include "sc_sub.h"
 }
 
@@ -176,7 +178,11 @@ static String settings_json() {
     s += "\"auto_classify\":" + String(g_settings.auto_classify ? "true" : "false") + ",";
     s += "\"match_db\":" + String(g_settings.match_db ? "true" : "false") + ",";
     s += "\"tx_enabled\":" + String(g_settings.tx_enabled ? "true" : "false") + ",";
-    s += "\"mqtt_enabled\":" + String(g_settings.mqtt_enabled ? "true" : "false");
+    s += "\"mqtt_enabled\":" + String(g_settings.mqtt_enabled ? "true" : "false") + ",";
+    // WiFi/MQTT config surfaced for the Settings UI (Esp §5); the password is write-only (never
+    // echoed back).
+    s += "\"wifi_ssid\":\"" + String(g_settings.wifi_ssid) + "\",";
+    s += "\"mqtt_host\":\"" + String(g_settings.mqtt_host) + "\"";
     s += "}";
     return s;
 }
@@ -415,7 +421,49 @@ static void process_capture(
 
 // --- Recon: occupancy.csv + watchlist.csv (Esp §3, System §9) ---
 
-static void write_occupancy_and_watchlist(const ScOccupancyBin* bins, size_t n) {
+// Collect existing user-pin/user-exclude rows (raw lines) so Recon preserves them across re-runs
+// and Reset (System §9). Excluded frequencies are also gathered into excl[] so the re-derived
+// watchlist drops them.
+static int collect_user_watchlist(
+    String* lines, int cap, int32_t* excl, int excl_cap, int* n_excl) {
+    *n_excl = 0;
+    int n = 0;
+    char wl_path[128];
+    place_file("watchlist.csv", wl_path, sizeof(wl_path));
+    if(!g_dfs->exists(wl_path)) return 0;
+    File f = g_dfs->open(wl_path, "r");
+    if(!f) return 0;
+    bool header = true;
+    while(f.available() && n < cap) {
+        String line = f.readStringUntil('\n');
+        if(header) {
+            header = false;
+            continue;
+        }
+        line.trim();
+        if(line.length() < 5) continue;
+        char src[16];
+        if(!esp_watchlist_parse_source(line.c_str(), src, sizeof(src))) continue;
+        if(strcmp(src, "user-pin") == 0 || strcmp(src, "user-exclude") == 0) {
+            lines[n++] = line;
+            if(strcmp(src, "user-exclude") == 0 && *n_excl < excl_cap) {
+                ScWatchlistEntry e;
+                if(esp_watchlist_parse_line(line.c_str(), &e)) excl[(*n_excl)++] = e.freq_hz;
+            }
+        }
+    }
+    f.close();
+    return n;
+}
+
+// Write occupancy.csv from `bins` and re-derive watchlist.csv. When keep_pins, user-pin/
+// user-exclude rows are preserved (and excluded freqs dropped from the recon rows) — System §9.
+static void write_occupancy_and_watchlist(const ScOccupancyBin* bins, size_t n, bool keep_pins) {
+    static String user_lines[32];
+    static int32_t excl[16];
+    int n_excl = 0;
+    int n_user = keep_pins ? collect_user_watchlist(user_lines, 32, excl, 16, &n_excl) : 0;
+
     char occ_path[128], wl_path[128];
     place_file("occupancy.csv", occ_path, sizeof(occ_path));
     place_file("watchlist.csv", wl_path, sizeof(wl_path));
@@ -431,7 +479,8 @@ static void write_occupancy_and_watchlist(const ScOccupancyBin* bins, size_t n) 
         occ.close();
     }
 
-    // derive watchlist from occupancy (shared logic, System §9)
+    // derive watchlist from occupancy (shared logic, System §9); drop excluded freqs, then append
+    // the preserved user pins/exclusions verbatim.
     static ScWatchlistEntry wl[64];
     size_t nwl = sc_watchlist_from_occupancy(bins, n, 0.10f, 12.0f, wl, 64);
     File w = g_dfs->open(wl_path, "w");
@@ -439,26 +488,56 @@ static void write_occupancy_and_watchlist(const ScOccupancyBin* bins, size_t n) 
         w.println(WATCHLIST_HEADER);
         char row[128];
         for(size_t i = 0; i < nwl; i++) {
+            bool excluded = false;
+            for(int j = 0; j < n_excl; j++)
+                if(wl[i].freq_hz == excl[j]) excluded = true;
+            if(excluded) continue;
             if(esp_watchlist_row(&wl[i], "recon", row, sizeof(row)) > 0) w.println(row);
         }
+        for(int i = 0; i < n_user; i++) w.println(user_lines[i]);
         w.close();
     }
 }
 
-static void recon_reset() {
-    write_occupancy_and_watchlist(nullptr, 0);
+// Read occupancy.csv back into bins[] for the cumulative-Recon accumulate merge (System §9).
+static size_t read_occupancy(ScOccupancyBin* out, size_t cap) {
+    char p[128];
+    place_file("occupancy.csv", p, sizeof(p));
+    if(!g_dfs->exists(p)) return 0;
+    File f = g_dfs->open(p, "r");
+    if(!f) return 0;
+    size_t n = 0;
+    bool header = true;
+    while(f.available() && n < cap) {
+        String line = f.readStringUntil('\n');
+        if(header) {
+            header = false;
+            continue;
+        }
+        line.trim();
+        if(line.length() < 5) continue;
+        if(esp_occupancy_parse_line(line.c_str(), &out[n])) n++;
+    }
+    f.close();
+    return n;
+}
+
+// Reset (System §9): wipe occupancy; keep_pins decides whether user pins/exclusions survive.
+static void recon_reset(bool keep_pins) {
+    write_occupancy_and_watchlist(nullptr, 0, keep_pins);
 }
 
 // Fixture recon: synthesize a few bins through the shared occupancy accumulators so the
-// occupancy -> watchlist derivation is exercised on-device with NO live RF (Esp §3.4).
-// The real stepped-RSSI sweep is TODO(hw).
-static void recon_fixture() {
+// occupancy -> watchlist derivation is exercised on-device with NO live RF (Esp §3.4). When
+// `accumulate` (the default, System §9), merge into the prior pass's occupancy (sc_occupancy_merge)
+// rather than replacing it; Fresh clears first. The real stepped-RSSI sweep is TODO(hw).
+static void recon_fixture(bool accumulate) {
     struct {
         int32_t freq;
         float base;
         int hot_of_10;
     } spec[] = {{433920000, -97, 10}, {315000000, -98, 5}, {915000000, -99, 8}, {390000000, -96, 0}};
-    static ScOccupancyBin bins[8];
+    static ScOccupancyBin bins[16];
     size_t n = 0;
     for(auto& s : spec) {
         ScOccupancyAccum a;
@@ -470,8 +549,65 @@ static void recon_fixture() {
         }
         sc_occupancy_accum_finish(&a, &bins[n++]);
     }
-    write_occupancy_and_watchlist(bins, n);
-    Serial.printf("SC scene=recon action=fixture bins=%u\n", (unsigned)n);
+    if(accumulate) {
+        static ScOccupancyBin prev[16];
+        size_t pn = read_occupancy(prev, 16);
+        for(size_t i = 0; i < pn && n < 16; i++) {
+            int hit = -1;
+            for(size_t j = 0; j < n; j++)
+                if(bins[j].freq_hz == prev[i].freq_hz) hit = (int)j;
+            if(hit >= 0)
+                sc_occupancy_merge(&bins[hit], 1, &prev[i], 1); // pass 1,1 CSV accumulate
+            else
+                bins[n++] = prev[i];
+        }
+    }
+    write_occupancy_and_watchlist(bins, n, true);
+    Serial.printf("SC scene=recon action=fixture mode=%s bins=%u\n",
+                  accumulate ? "accumulate" : "fresh", (unsigned)n);
+}
+
+// Pin / exclude / remove a frequency in watchlist.csv (source=user-pin|user-exclude); these
+// survive re-runs and Reset (System §9). source=NULL removes any user row for `freq`. Drops any
+// prior user row for the same freq first (so pin<->exclude toggles cleanly).
+static void set_watchlist_pin(int32_t freq, const char* source) {
+    char wl_path[128];
+    place_file("watchlist.csv", wl_path, sizeof(wl_path));
+    static String lines[96];
+    int n = 0;
+    if(g_dfs->exists(wl_path)) {
+        File f = g_dfs->open(wl_path, "r");
+        bool header = true;
+        while(f.available() && n < 96) {
+            String l = f.readStringUntil('\n');
+            if(header) {
+                header = false;
+                continue;
+            }
+            l.trim();
+            if(l.length() >= 5) lines[n++] = l;
+        }
+        f.close();
+    }
+    File w = g_dfs->open(wl_path, "w");
+    if(!w) return;
+    w.println(WATCHLIST_HEADER);
+    for(int i = 0; i < n; i++) {
+        ScWatchlistEntry e;
+        char src[16];
+        if(esp_watchlist_parse_line(lines[i].c_str(), &e) &&
+           esp_watchlist_parse_source(lines[i].c_str(), src, sizeof(src))) {
+            bool is_user = strcmp(src, "user-pin") == 0 || strcmp(src, "user-exclude") == 0;
+            if(is_user && e.freq_hz == freq) continue; // drop the old user row for this freq
+        }
+        w.println(lines[i]);
+    }
+    if(source) {
+        ScWatchlistEntry e = {freq, SC_MOD_OOK, 0.0f, 0.0f};
+        char row[128];
+        if(esp_watchlist_row(&e, source, row, sizeof(row)) > 0) w.println(row);
+    }
+    w.close();
 }
 
 // Sweep/Camp consume the watchlist (System §9). Load its frequencies into freqs[].
@@ -624,6 +760,30 @@ static bool brain_pull(const char* base_url) {
     return ok;
 }
 
+// Push this node's user-confirmed fingerprints back to the shared brain (Esp §6): HTTP PUT the
+// local signatures/fingerprints.csv so it participates without an SD card. build_signatures.py
+// remains the merge point (System §8) — the host dedups/merges. Live HTTP is TODO(hw).
+static bool brain_push(const char* base_url) {
+    if(WiFi.status() != WL_CONNECTED) return false;
+    char sig[64], path[96];
+    esp_signatures_dir(g_base, sig, sizeof(sig));
+    snprintf(path, sizeof(path), "%s/fingerprints.csv", sig);
+    if(!g_dfs->exists(path)) return false; // nothing to contribute yet
+    File f = g_dfs->open(path, "r");
+    if(!f) return false;
+    String body = f.readString();
+    f.close();
+    HTTPClient http;
+    char url[160];
+    snprintf(url, sizeof(url), "%s/fingerprints.csv", base_url);
+    http.begin(g_wifi_client, url);
+    http.addHeader("Content-Type", "text/csv");
+    int code = http.PUT((uint8_t*)body.c_str(), body.length());
+    http.end();
+    Serial.printf("SC action=brain_push code=%d bytes=%u\n", code, (unsigned)body.length());
+    return code >= 200 && code < 300;
+}
+
 // --- OTA (Esp §6) ---
 
 static void ota_setup() {
@@ -633,9 +793,10 @@ static void ota_setup() {
 
 // --- replay / edit-before-transmit (Esp §5, System §7b) — the ONLY TX path ---
 // Passive-while-scanning is unchanged; TX is opt-in, explicit, single-frame, allow-list gated.
-// Live CC1101 transmit is TODO(hw). Field-map heavy crunch (differential + CRC search) defers
-// to the host tools (build_signatures.py / the Pi's fieldmap.py); the node does labeling +
-// active confirmation via this TX path.
+// Live CC1101 transmit is TODO(hw). The passive field-map DIFFERENTIAL OVERLAY + checksum
+// discovery run ON-DEVICE now (esp_fieldmap, reusing shared/core sc_diff + sc_crc); the node
+// does the segment labeling + confirmation (writes a proposed field_maps/ entry, never
+// auto-committed) and active own-device confirmation via this guarded TX path.
 
 static bool cc1101_tx_sub(const int32_t* timings, size_t n, int32_t freq, const char* preset) {
     (void)timings;
@@ -670,6 +831,253 @@ static void tx_from_sub(AsyncWebServerRequest* req, const String& sub_text, cons
     char resp[96];
     snprintf(resp, sizeof(resp), "{\"ok\":%s,\"freq_hz\":%ld}", ok ? "true" : "false", (long)freq);
     req->send(ok ? 200 : 502, "application/json", resp);
+}
+
+// --- field-map discovery / edit (Esp §5, System §7b) — passive differential overlay + segment
+// labeling + confirm, ON-DEVICE via esp_fieldmap (shared/core sc_diff + sc_crc). No TX here;
+// active confirmation of an edited (re-signed) frame rides the guarded /api/edit_tx path. ---
+
+static const char* FIELDMAPS_DIR_LEAF = "field_maps";
+
+static void field_maps_dir(char* out, size_t cap) {
+    char sig[64];
+    esp_signatures_dir(g_base, sig, sizeof(sig));
+    snprintf(out, cap, "%s/%s", sig, FIELDMAPS_DIR_LEAF);
+}
+
+// Slice a stored .sub capture into an MSB-first bit frame (sc_slice) using its own dominant
+// symbol unit (sc_feature sym_dur_us[0]). Returns the bit count, 0 on failure. This is the
+// on-device path that turns real captures into the aligned byte frames the differential overlay
+// operates on — a crude line-code-agnostic slice, not a protocol decode (Zero §6 scope).
+static size_t sub_to_bits(const char* rel, uint8_t* out, size_t cap_bytes, int32_t* unit_out) {
+    char abs[192];
+    place_file(rel, abs, sizeof(abs));
+    if(!g_dfs->exists(abs)) return 0;
+    File f = g_dfs->open(abs, "r");
+    if(!f) return 0;
+    String text = f.readString();
+    f.close();
+    ScSubMeta meta;
+    static int32_t timings[1024];
+    size_t tn = 0;
+    if(sc_sub_parse(text.c_str(), text.length(), &meta, timings, 1024, &tn) == SC_ERR || tn == 0)
+        return 0;
+    ScFeatureVector fv;
+    sc_feature_compute(timings, tn, meta.frequency, preset_modulation(g_settings.capture_preset), &fv);
+    int32_t unit = fv.sym_dur_us[0] > 0 ? fv.sym_dur_us[0] : 100;
+    if(unit_out) *unit_out = unit;
+    return sc_slice_bits(timings, tn, unit, out, cap_bytes);
+}
+
+// Build an aligned byte corpus from a comma/newline-separated list of place-relative .sub paths.
+// Frames are truncated to the shortest common byte length (captures of one device align). Returns
+// the frame count and sets *nbytes; 0 if fewer than 2 usable frames.
+static size_t build_corpus_from_subs(const char* list, uint8_t* corpus, size_t* nbytes) {
+    size_t nf = 0;
+    size_t minbytes = ESP_FIELDMAP_MAX_BYTES;
+    String s(list);
+    int start = 0;
+    while(start < (int)s.length() && nf < ESP_FIELDMAP_MAX_FRAMES) {
+        int comma = s.indexOf(',', start);
+        int nl = s.indexOf('\n', start);
+        int end = comma < 0 ? nl : (nl < 0 ? comma : (comma < nl ? comma : nl));
+        if(end < 0) end = s.length();
+        String path = s.substring(start, end);
+        path.trim();
+        start = end + 1;
+        if(!path.length()) continue;
+        uint8_t bits[ESP_FIELDMAP_MAX_BYTES];
+        size_t nbits = sub_to_bits(path.c_str(), bits, ESP_FIELDMAP_MAX_BYTES, nullptr);
+        size_t nb = nbits / 8; // whole bytes only, for byte-granular segmentation
+        if(nb < 1) continue;
+        if(nb > ESP_FIELDMAP_MAX_BYTES) nb = ESP_FIELDMAP_MAX_BYTES;
+        if(nb < minbytes) minbytes = nb;
+        memcpy(corpus + nf * ESP_FIELDMAP_MAX_BYTES, bits, nb);
+        nf++;
+    }
+    if(nf < 2) return 0;
+    *nbytes = minbytes;
+    return nf;
+}
+
+// Analyze a posted corpus into a proposal (JSON for the browser). The corpus is either `subs` (a
+// list of place-relative .sub capture paths, sliced on-device via sc_slice) or `frames` (aligned
+// hex, one per line). Optional `signature`, and per-field user labels
+// `nameN`/`semN`/`clsN` (the segment-labeling step). When `write` is true the (user-confirmed)
+// structure is persisted as a signatures/field_maps/<slug>.fmap entry via sc_fieldmap_emit — the
+// field_maps/ entry (System §7b). Passive — NEVER transmits.
+static void handle_fieldmap(AsyncWebServerRequest* req, bool write) {
+    static uint8_t corpus[ESP_FIELDMAP_MAX_FRAMES * ESP_FIELDMAP_MAX_BYTES];
+    size_t nbytes = 0;
+    size_t nf = 0;
+    if(req->hasParam("subs", true)) {
+        // corpus from real captures — sliced on-device (sc_slice), no pasted hex needed
+        nf = build_corpus_from_subs(req->getParam("subs", true)->value().c_str(), corpus, &nbytes);
+    } else if(req->hasParam("frames", true)) {
+        nf = esp_fieldmap_parse_hex(req->getParam("frames", true)->value().c_str(), corpus,
+                                    ESP_FIELDMAP_MAX_FRAMES, &nbytes);
+    } else {
+        req->send(400, "application/json",
+                  "{\"error\":\"subs (.sub paths) or frames (hex, one per line) required\"}");
+        return;
+    }
+    if(nf < 2) {
+        req->send(422, "application/json",
+                  "{\"error\":\"need >=2 aligned (equal-length) frames for differential\"}");
+        return;
+    }
+    String signature = req->hasParam("signature", true) ? req->getParam("signature", true)->value()
+                                                        : String("unknown");
+    uint8_t modulation = preset_modulation(g_settings.capture_preset) == SC_MOD_2FSK ? 1 : 0;
+
+    static ScFieldMap map; // shared/core structure (identical to the Zero's proposal)
+    float conf = 0.0f;
+    if(!esp_fieldmap_analyze(corpus, nf, nbytes, signature.c_str(), modulation, &map, &conf)) {
+        req->send(422, "application/json", "{\"error\":\"not analyzable\"}");
+        return;
+    }
+
+    // apply per-field user labels (name/semantics/class overrides) — the labeling step (§7b)
+    for(size_t i = 0; i < map.n_fields; i++) {
+        char k[8];
+        snprintf(k, sizeof(k), "name%u", (unsigned)i);
+        if(req->hasParam(k, true))
+            strncpy(map.fields[i].name, req->getParam(k, true)->value().c_str(),
+                    sizeof(map.fields[i].name) - 1);
+        snprintf(k, sizeof(k), "sem%u", (unsigned)i);
+        if(req->hasParam(k, true))
+            strncpy(map.fields[i].semantics, req->getParam(k, true)->value().c_str(),
+                    sizeof(map.fields[i].semantics) - 1);
+        snprintf(k, sizeof(k), "cls%u", (unsigned)i);
+        if(req->hasParam(k, true))
+            map.fields[i].cls = sc_field_class_from_str(req->getParam(k, true)->value().c_str());
+    }
+
+    if(write) {
+        // Persist the user-confirmed field_maps/ entry. NEVER auto-committed: reaching here needs
+        // an explicit user confirm; the brain never writes this on its own (System §7b). Only a
+        // confirmed map carries source=user.
+        map.user_confirmed = true;
+        char dir[96];
+        field_maps_dir(dir, sizeof(dir));
+        g_dfs->mkdir(dir);
+        char slug[ESP_PLACE_ID_LEN];
+        esp_place_id_from_name(signature.c_str(), slug, sizeof(slug));
+        char path[160];
+        snprintf(path, sizeof(path), "%s/%s.fmap", dir, slug);
+        static char fmap[2048];
+        size_t fn = sc_fieldmap_emit(&map, fmap, sizeof(fmap));
+        File f = g_dfs->open(path, "w");
+        if(f) {
+            f.write((const uint8_t*)fmap, fn);
+            f.close();
+        }
+        Serial.printf("SC action=fieldmap_confirm sig=%s frames=%u -> %s (user-confirmed)\n",
+                      signature.c_str(), (unsigned)nf, path);
+    }
+
+    static char json[4096];
+    int n = esp_fieldmap_to_json(&map, conf, json, sizeof(json));
+    if(n < 0) {
+        req->send(500, "application/json", "{\"error\":\"proposal too large\"}");
+        return;
+    }
+    req->send(200, "application/json", json);
+}
+
+// Re-sign an edited byte frame: recompute its trailing check byte for the named checksum family
+// (shared sc_checksum_compute) so an edit stays valid before an active-confirmation TX (System
+// §7b). Returns the re-signed hex. The actual transmit-to-own-device is the guarded single-frame
+// /api/edit_tx path (byte-frame -> RAW timing re-encode for a live send is protocol-specific and
+// TODO(hw)).
+static void handle_fieldmap_resign(AsyncWebServerRequest* req) {
+    if(!req->hasParam("frame", true) || !req->hasParam("kind", true)) {
+        req->send(400, "application/json", "{\"error\":\"frame (hex) + kind required\"}");
+        return;
+    }
+    String frame_hex = req->getParam("frame", true)->value();
+    static uint8_t corpus[ESP_FIELDMAP_MAX_FRAMES * ESP_FIELDMAP_MAX_BYTES];
+    size_t nbytes = 0;
+    if(esp_fieldmap_parse_hex(frame_hex.c_str(), corpus, 1, &nbytes) != 1 || nbytes < 2) {
+        req->send(422, "application/json", "{\"error\":\"one hex frame of >=2 bytes required\"}");
+        return;
+    }
+    String kind = req->getParam("kind", true)->value();
+    ScChecksumSpec spec;
+    memset(&spec, 0, sizeof(spec));
+    if(kind == "xor") spec.kind = SC_CK_XOR;
+    else if(kind == "sum") spec.kind = SC_CK_SUM;
+    else if(kind == "crc8") spec.kind = SC_CK_CRC8;
+    else if(kind == "crc8le") spec.kind = SC_CK_CRC8LE;
+    else if(kind == "lfsr8") spec.kind = SC_CK_LFSR8;
+    else {
+        req->send(400, "application/json", "{\"error\":\"unknown checksum kind\"}");
+        return;
+    }
+    auto u8p = [&](const char* k) -> uint8_t {
+        return req->hasParam(k, true) ? (uint8_t)req->getParam(k, true)->value().toInt() : 0;
+    };
+    spec.poly = u8p("poly");
+    spec.init = u8p("init");
+    spec.gen = u8p("gen");
+    spec.key = u8p("key");
+    size_t over = req->hasParam("over_bytes", true)
+                      ? (size_t)req->getParam("over_bytes", true)->value().toInt()
+                      : nbytes - 1;
+    if(over >= nbytes) over = nbytes - 1;
+    uint8_t ck = sc_checksum_compute(&spec, corpus, over);
+    corpus[over] = ck; // re-sign in place (check byte immediately after the covered span)
+    String hex;
+    char b[4];
+    for(size_t i = 0; i < nbytes; i++) {
+        snprintf(b, sizeof(b), "%02X", corpus[i]);
+        hex += b;
+    }
+    char resp[128];
+    snprintf(resp, sizeof(resp), "{\"ok\":true,\"frame\":\"%s\",\"check\":%d}", hex.c_str(), ck);
+    req->send(200, "application/json", resp);
+}
+
+// Active own-device confirmation: encode an edited hex byte frame back to RAW timings (sc_slice,
+// the exact inverse of the slice) and transmit ONCE through the guarded single-frame path. This
+// is the "transmit an edited frame to your own device and watch it react" loop (System §7b).
+// Same guards as replay/edit-TX: opt-in, TX-allow-list, single-frame; the live CC1101 send is
+// TODO(hw). POST /api/fieldmap/tx  frame=<hex>&unit_us=&freq=&preset=
+static void handle_fieldmap_tx(AsyncWebServerRequest* req) {
+    if(!req->hasParam("frame", true)) {
+        req->send(400, "application/json", "{\"error\":\"frame (hex) required\"}");
+        return;
+    }
+    static uint8_t bytes[ESP_FIELDMAP_MAX_BYTES];
+    size_t nbytes = 0;
+    if(esp_fieldmap_parse_hex(req->getParam("frame", true)->value().c_str(), bytes, 1, &nbytes) != 1) {
+        req->send(422, "application/json", "{\"error\":\"one hex frame required\"}");
+        return;
+    }
+    int32_t unit = req->hasParam("unit_us", true)
+                       ? (int32_t)req->getParam("unit_us", true)->value().toInt()
+                       : 0;
+    if(unit <= 0) unit = 350; // default OOK short-symbol unit (µs) when unspecified
+    static int32_t timings[1024];
+    size_t tn = sc_slice_encode(bytes, nbytes * 8, unit, timings, 1024);
+    if(tn == 0) {
+        req->send(422, "application/json", "{\"error\":\"encode produced no timings\"}");
+        return;
+    }
+    int32_t freq = req->hasParam("freq", true) ? (int32_t)req->getParam("freq", true)->value().toInt()
+                                               : 433920000;
+    String preset = req->hasParam("preset", true) ? req->getParam("preset", true)->value()
+                                                   : String("OOK650");
+    // wrap into a .sub and reuse the guarded single-frame TX path (guard + distinct logging)
+    ScSubMeta meta = {freq, "", ""};
+    snprintf(meta.preset, sizeof(meta.preset), "%s", preset.c_str());
+    static char subbuf[8192];
+    size_t sublen = 0;
+    if(sc_sub_encode(&meta, timings, tn, subbuf, sizeof(subbuf), 512, &sublen) != SC_OK) {
+        req->send(500, "application/json", "{\"error\":\"sub encode failed\"}");
+        return;
+    }
+    tx_from_sub(req, String(subbuf), "fieldmap_tx");
 }
 
 // --- web ---
@@ -776,15 +1184,26 @@ static void web_start() {
     });
     // pull the global signatures/ brain from a host over WiFi (Esp §6). build_signatures.py
     // remains the merge point (System §8). POST /api/brain/sync  url=http://host/signatures
+    // Sync the global signatures/ brain with a host over WiFi (Esp §6): PULL the shared brain and
+    // PUSH this node's user-confirmed fingerprints back so it participates without an SD card.
+    // build_signatures.py remains the merge point (System §8). Live HTTP is TODO(hw).
+    // POST /api/brain/sync  url=http://host/signatures  [dir=pull|push|sync (default sync)]
     g_server.on("/api/brain/sync", HTTP_POST, [](AsyncWebServerRequest* req) {
         String url = req->hasParam("url", true) ? req->getParam("url", true)->value() : "";
         if(!url.length()) {
             req->send(400, "application/json", "{\"error\":\"url required\"}");
             return;
         }
-        bool ok = brain_pull(url.c_str());
-        req->send(ok ? 200 : 502, "application/json",
-                  ok ? "{\"ok\":true}" : "{\"ok\":false,\"note\":\"pull failed (needs a reachable host)\"}");
+        String dir = req->hasParam("dir", true) ? req->getParam("dir", true)->value() : "sync";
+        bool pulled = true, pushed = true;
+        if(dir == "pull" || dir == "sync") pulled = brain_pull(url.c_str());
+        if(dir == "push" || dir == "sync") pushed = brain_push(url.c_str());
+        bool ok = pulled && pushed;
+        char resp[128];
+        snprintf(resp, sizeof(resp),
+                 "{\"ok\":%s,\"pulled\":%s,\"pushed\":%s,\"note\":\"needs a reachable host\"}",
+                 ok ? "true" : "false", pulled ? "true" : "false", pushed ? "true" : "false");
+        req->send(ok ? 200 : 502, "application/json", resp);
     });
     g_server.on("/api/place", HTTP_POST, [](AsyncWebServerRequest* req) {
         String action = req->hasParam("action", true) ? req->getParam("action", true)->value() : "";
@@ -848,10 +1267,13 @@ static void web_start() {
     });
     g_server.on("/api/recon", HTTP_POST, [](AsyncWebServerRequest* req) {
         String action = req->hasParam("action", true) ? req->getParam("action", true)->value() : "";
+        String mode = req->hasParam("mode", true) ? req->getParam("mode", true)->value() : "";
         if(action == "reset") {
-            recon_reset();
-        } else if(action == "fixture") {
-            recon_fixture(); // §3.4 no-RF path exercising occupancy -> watchlist
+            // keep user pins unless explicitly wiping (System §9 reset prompts keep-or-wipe)
+            recon_reset(mode != "wipe");
+        } else if(action == "fixture" || action == "run") {
+            // accumulate (default) merges into the prior pass; fresh clears first (System §9)
+            recon_fixture(mode != "fresh"); // §3.4 no-RF path exercising occupancy -> watchlist
         } else {
             // TODO(hw): live stepped-RSSI sweep (accumulate/fresh, System §9)
             req->send(202, "application/json", "{\"ok\":true,\"note\":\"live recon needs hardware\"}");
@@ -903,6 +1325,47 @@ static void web_start() {
             String body((const char*)data, len);
             tx_from_sub(req, body, "edit_tx");
         });
+    // Field-map differential overlay (System §7b tier 1+2): POST an aligned hex-frame corpus,
+    // get back the passive per-byte segmentation (static/slow/counter/checksum) + named checksum
+    // as a PROPOSED field_maps/ entry. Passive — no TX. POST /api/fieldmap  frames=<hex lines>
+    g_server.on("/api/fieldmap", HTTP_POST,
+                [](AsyncWebServerRequest* req) { handle_fieldmap(req, false); });
+    // Confirm the labeled structure -> write signatures/field_maps/<slug>.json (user-confirmed;
+    // never auto-committed, System §7b). POST /api/fieldmap/confirm  frames, signature, nameN, semN
+    g_server.on("/api/fieldmap/confirm", HTTP_POST,
+                [](AsyncWebServerRequest* req) { handle_fieldmap(req, true); });
+    // Re-sign an edited byte frame for active own-device confirmation (recompute the check byte
+    // via the shared CRC family). POST /api/fieldmap/resign  frame=<hex>&kind=&poly=&init=&over_bytes=
+    g_server.on("/api/fieldmap/resign", HTTP_POST,
+                [](AsyncWebServerRequest* req) { handle_fieldmap_resign(req); });
+    // Active own-device confirmation: re-encode an edited frame to timings (sc_slice) + transmit
+    // ONE frame, guarded. POST /api/fieldmap/tx  frame=<hex>&unit_us=&freq=&preset=
+    g_server.on("/api/fieldmap/tx", HTTP_POST,
+                [](AsyncWebServerRequest* req) { handle_fieldmap_tx(req); });
+    // List proposed field_maps/ entries. GET /api/fieldmaps
+    g_server.on("/api/fieldmaps", HTTP_GET, [](AsyncWebServerRequest* req) {
+        char dir[96];
+        field_maps_dir(dir, sizeof(dir));
+        String out = "{\"field_maps\":[";
+        File d = g_dfs->open(dir);
+        bool first = true;
+        if(d) {
+            for(File e = d.openNextFile(); e; e = d.openNextFile()) {
+                if(!e.isDirectory()) {
+                    String nm = String(e.name());
+                    int slash = nm.lastIndexOf('/');
+                    if(slash >= 0) nm = nm.substring(slash + 1);
+                    if(!first) out += ",";
+                    first = false;
+                    out += "\"" + nm + "\"";
+                }
+                e.close();
+            }
+            d.close();
+        }
+        out += "]}";
+        req->send(200, "application/json", out);
+    });
     // Review candidates for a capture: recompute its feature vector from the .sub and run
     // k-NN (System §6). GET /api/candidates?sub=<place-relative path>
     g_server.on("/api/candidates", HTTP_GET, [](AsyncWebServerRequest* req) {

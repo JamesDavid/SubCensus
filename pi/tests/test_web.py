@@ -6,7 +6,21 @@ from fastapi.testclient import TestClient
 from subcensuspi.collector.collector import Collector
 from subcensuspi.collector.rtl433 import replay_file
 from subcensuspi.db import Database, device_id_for
-from subcensuspi.web.app import create_app
+from subcensuspi.web.app import activity_buckets, create_app, sparkline
+
+
+def test_activity_buckets_and_sparkline_edge_cases():
+    assert activity_buckets([], 8) == [0] * 8
+    assert sparkline([0] * 8) == ""  # no activity -> empty
+    # a single reception lands in the newest bin
+    one = activity_buckets(["2026-07-04T12:00:00"], 8)
+    assert sum(one) == 1 and one[-1] == 1
+    # evenly spread receptions fill distinct bins; sparkline is a unicode-block string
+    spread = activity_buckets(
+        ["2026-07-04T12:00:00", "2026-07-04T12:01:00", "2026-07-04T12:02:00"], 6
+    )
+    assert sum(spread) == 3
+    assert all(ch in " ▁▂▃▄▅▆▇█" for ch in sparkline(spread)) and sparkline(spread)
 
 
 @pytest.fixture
@@ -31,6 +45,27 @@ def test_index_renders_devices(client):
     assert "Acurite-Tower" in r.text
     assert "Live feed" in r.text
     assert "weather" in r.text  # taxonomy class in the label picker
+    # §7 devices table columns: last-seen + activity sparkline
+    assert "Last seen" in r.text
+    assert "Activity" in r.text
+
+
+def test_index_renders_activity_sparkline(client):
+    r = client.get("/")
+    # Acurite-Tower has 4 receptions spread across ~3 min -> a non-empty unicode-block sparkline
+    assert 'class="spark"' in r.text
+    assert any(block in r.text for block in "▁▂▃▄▅▆▇█")
+
+
+def test_device_activity_endpoint(client):
+    did = device_id_for("Acurite-Tower", "1234", "A")
+    r = client.get(f"/api/device/{did}/activity?buckets=12")
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["buckets"]) == 12
+    assert sum(body["buckets"]) == 4  # 4 receptions in the fixture
+    assert isinstance(body["sparkline"], str) and body["sparkline"]
+    assert client.get("/api/device/deadbeef/activity").status_code == 404
 
 
 def test_api_devices(client):

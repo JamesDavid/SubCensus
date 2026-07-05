@@ -43,6 +43,7 @@ struct CensusRecon {
     char place_id[CENSUS_PLACE_ID_LEN];
     uint16_t survey_minutes;
     uint32_t step_hz;
+    uint8_t grid_mode;
     float threshold_dbm;
     bool fresh;
 
@@ -59,13 +60,19 @@ struct CensusRecon {
     void* progress_ctx;
 };
 
-size_t census_recon_build_grid(uint32_t step_hz, uint32_t* grid, size_t cap) {
+size_t census_recon_build_grid(uint8_t grid_mode, uint32_t step_hz, uint32_t* grid, size_t cap) {
     size_t n = 0;
-    for(size_t i = 0; i < sizeof(RECON_KNOWN) / sizeof(RECON_KNOWN[0]) && n < cap; i++) {
-        grid[n++] = RECON_KNOWN[i];
+    /* Full-band is a uniform coarse grid (no special known channels); the other two include
+     * the fine known list; Known-only stops there (§3.3 Stage A / §4). */
+    bool include_known = (grid_mode != CensusReconGridFull);
+    bool include_coarse = (grid_mode != CensusReconGridKnown);
+    if(include_known) {
+        for(size_t i = 0; i < sizeof(RECON_KNOWN) / sizeof(RECON_KNOWN[0]) && n < cap; i++) {
+            grid[n++] = RECON_KNOWN[i];
+        }
     }
     if(step_hz < 250000) step_hz = 250000;
-    for(size_t s = 0; s < 3 && n < cap; s++) {
+    for(size_t s = 0; s < 3 && include_coarse && n < cap; s++) {
         for(uint32_t f = RECON_SEG[s][0]; f <= RECON_SEG[s][1] && n < cap; f += step_hz) {
             /* skip bins within half a step of a known channel (dedup) */
             bool near = false;
@@ -141,9 +148,67 @@ static void recon_accumulate(CensusRecon* r, ScOccupancyBin* bins, size_t n) {
     storage_file_free(f);
 }
 
+/* Collect the freqs of existing user-pin / user-exclude watchlist rows so a regenerated
+ * watchlist preserves them (System §9). Returns counts via *np / *nx. */
+static void recon_read_user_rows(
+    CensusRecon* r,
+    uint32_t* pinned,
+    size_t* np,
+    uint32_t* excluded,
+    size_t* nx,
+    size_t cap) {
+    *np = 0;
+    *nx = 0;
+    char path[160];
+    census_place_file(r->place_id, "watchlist.csv", path, sizeof(path));
+    File* f = storage_file_alloc(r->storage);
+    if(storage_file_open(f, path, FSAM_READ, FSOM_OPEN_EXISTING)) {
+        char line[160];
+        size_t li = 0;
+        bool header = true;
+        char c;
+        while(storage_file_read(f, &c, 1) == 1) {
+            if(c == '\n' || li >= sizeof(line) - 1) {
+                line[li] = '\0';
+                if(!header && li > 0) {
+                    uint32_t freq = (uint32_t)strtoul(line, NULL, 10);
+                    /* find col 4 (source) */
+                    const char* p = line;
+                    for(int col = 0; col < 4 && *p; col++) {
+                        while(*p && *p != ',')
+                            p++;
+                        if(*p == ',') p++;
+                    }
+                    if(strncmp(p, "user-pin", 8) == 0 && *np < cap)
+                        pinned[(*np)++] = freq;
+                    else if(strncmp(p, "user-exclude", 12) == 0 && *nx < cap)
+                        excluded[(*nx)++] = freq;
+                }
+                header = false;
+                li = 0;
+            } else if(c != '\r') {
+                line[li++] = c;
+            }
+        }
+    }
+    storage_file_close(f);
+    storage_file_free(f);
+}
+
+static bool freq_in(const uint32_t* list, size_t n, uint32_t f) {
+    for(size_t i = 0; i < n; i++)
+        if(list[i] == f) return true;
+    return false;
+}
+
 static void recon_write_csvs(CensusRecon* r, ScOccupancyBin* bins, size_t n) {
     char ts[32];
     recon_iso_now(ts, sizeof(ts));
+
+    /* preserve user pins/exclusions across the regeneration (System §9) */
+    uint32_t pinned[32], excluded[32];
+    size_t np = 0, nx = 0;
+    recon_read_user_rows(r, pinned, &np, excluded, &nx, 32);
 
     /* occupancy.csv */
     char occ_path[160];
@@ -178,14 +243,29 @@ static void recon_write_csvs(CensusRecon* r, ScOccupancyBin* bins, size_t n) {
     if(storage_file_open(f, wl_path, FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
         storage_file_write(f, WATCHLIST_HEADER "\n", strlen(WATCHLIST_HEADER) + 1);
         for(size_t i = 0; i < nwl; i++) {
+            uint32_t freq = (uint32_t)wl[i].freq_hz;
+            if(freq_in(excluded, nx, freq)) continue; /* excluded: omit (§9) */
+            const char* src = freq_in(pinned, np, freq) ? "user-pin" : "recon";
             char row[128];
             int len = snprintf(
                 row,
                 sizeof(row),
-                "%ld,OOK,%.1f,%.4f,recon\n",
+                "%ld,OOK,%.1f,%.4f,%s\n",
                 (long)wl[i].freq_hz,
                 (double)wl[i].threshold_dbm,
-                (double)wl[i].occupancy);
+                (double)wl[i].occupancy,
+                src);
+            storage_file_write(f, row, len);
+        }
+        /* re-add pinned freqs the recon pass didn't surface (§9 preserve pins) */
+        for(size_t i = 0; i < np; i++) {
+            bool present = false;
+            for(size_t j = 0; j < nwl; j++)
+                if((uint32_t)wl[j].freq_hz == pinned[i]) present = true;
+            if(present || freq_in(excluded, nx, pinned[i])) continue;
+            char row[128];
+            int len = snprintf(
+                row, sizeof(row), "%lu,OOK,-80.0,0.0000,user-pin\n", (unsigned long)pinned[i]);
             storage_file_write(f, row, len);
         }
     }
@@ -195,7 +275,7 @@ static void recon_write_csvs(CensusRecon* r, ScOccupancyBin* bins, size_t n) {
 
 static int32_t census_recon_thread(void* context) {
     CensusRecon* r = context;
-    r->grid_n = census_recon_build_grid(r->step_hz, r->grid, CENSUS_RECON_MAX_BINS);
+    r->grid_n = census_recon_build_grid(r->grid_mode, r->step_hz, r->grid, CENSUS_RECON_MAX_BINS);
     for(size_t i = 0; i < r->grid_n; i++)
         sc_occupancy_accum_init(&r->accum[i], (int32_t)r->grid[i]);
 
@@ -252,6 +332,63 @@ static int32_t census_recon_thread(void* context) {
     return 0;
 }
 
+void census_recon_reset(Storage* storage, const char* place_id, bool keep_pins) {
+    /* occupancy.csv -> header only */
+    char occ_path[160];
+    census_place_file(place_id, "occupancy.csv", occ_path, sizeof(occ_path));
+    File* f = storage_file_alloc(storage);
+    if(storage_file_open(f, occ_path, FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
+        storage_file_write(f, OCCUPANCY_HEADER "\n", strlen(OCCUPANCY_HEADER) + 1);
+    }
+    storage_file_close(f);
+    storage_file_free(f);
+
+    /* watchlist.csv -> keep only user rows (keep_pins) or empty */
+    char wl_path[160];
+    census_place_file(place_id, "watchlist.csv", wl_path, sizeof(wl_path));
+    char* keep = malloc(2048);
+    if(!keep) return;
+    size_t out = 0;
+    out += (size_t)snprintf(keep + out, 2048 - out, "%s\n", WATCHLIST_HEADER);
+    if(keep_pins) {
+        File* rf = storage_file_alloc(storage);
+        if(storage_file_open(rf, wl_path, FSAM_READ, FSOM_OPEN_EXISTING)) {
+            char line[160];
+            size_t li = 0;
+            bool header = true;
+            char c;
+            while(storage_file_read(rf, &c, 1) == 1) {
+                if(c == '\n' || li >= sizeof(line) - 1) {
+                    line[li] = '\0';
+                    if(!header && li > 0 && out < 1900) {
+                        const char* p = line;
+                        for(int col = 0; col < 4 && *p; col++) {
+                            while(*p && *p != ',')
+                                p++;
+                            if(*p == ',') p++;
+                        }
+                        if(strncmp(p, "user-", 5) == 0)
+                            out += (size_t)snprintf(keep + out, 2048 - out, "%s\n", line);
+                    }
+                    header = false;
+                    li = 0;
+                } else if(c != '\r') {
+                    line[li++] = c;
+                }
+            }
+        }
+        storage_file_close(rf);
+        storage_file_free(rf);
+    }
+    File* w = storage_file_alloc(storage);
+    if(storage_file_open(w, wl_path, FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
+        storage_file_write(w, keep, out);
+    }
+    storage_file_close(w);
+    storage_file_free(w);
+    free(keep);
+}
+
 CensusRecon* census_recon_alloc(Storage* storage) {
     CensusRecon* r = malloc(sizeof(CensusRecon));
     memset(r, 0, sizeof(CensusRecon));
@@ -279,6 +416,8 @@ void census_recon_start(CensusRecon* r, const CensusSettings* s, const char* pla
     strncpy(r->place_id, place_id, CENSUS_PLACE_ID_LEN - 1);
     r->place_id[CENSUS_PLACE_ID_LEN - 1] = '\0';
     r->survey_minutes = s->survey_minutes ? s->survey_minutes : 15;
+    r->step_hz = s->recon_step_hz ? s->recon_step_hz : 250000;
+    r->grid_mode = s->recon_grid;
     r->threshold_dbm = s->rssi_auto ? -80 : (float)s->rssi_threshold;
     r->fresh = fresh;
     r->pass = 0;
@@ -313,4 +452,60 @@ uint32_t census_recon_pass(CensusRecon* r) {
 }
 uint32_t census_recon_elapsed_s(CensusRecon* r) {
     return (furi_get_tick() - r->start_tick) / 1000;
+}
+
+/* --- spectrum-strip live view (§6) --- */
+
+uint8_t census_recon_current_segment(CensusRecon* r) {
+    uint32_t f = r->current_freq;
+    for(uint8_t s = 0; s < 3; s++) {
+        if(f >= RECON_SEG[s][0] && f <= RECON_SEG[s][1]) return s;
+    }
+    return 0;
+}
+
+void census_recon_segment_bounds(uint8_t seg, uint32_t* lo, uint32_t* hi) {
+    if(seg > 2) seg = 2;
+    if(lo) *lo = RECON_SEG[seg][0];
+    if(hi) *hi = RECON_SEG[seg][1];
+}
+
+size_t census_recon_segment_bars(CensusRecon* r, uint8_t seg, float* bars, size_t nbars) {
+    if(seg > 2) seg = 2;
+    uint32_t lo = RECON_SEG[seg][0], hi = RECON_SEG[seg][1];
+    uint32_t span = hi - lo;
+    for(size_t i = 0; i < nbars; i++)
+        bars[i] = CENSUS_RSSI_NONE;
+    if(span == 0) return nbars;
+    for(size_t i = 0; i < r->grid_n; i++) {
+        uint32_t f = (uint32_t)r->accum[i].freq_hz;
+        if(f < lo || f > hi) continue;
+        size_t b = (size_t)(((uint64_t)(f - lo) * nbars) / span);
+        if(b >= nbars) b = nbars - 1;
+        float pk = r->accum[i].started ? r->accum[i].peak_rssi : CENSUS_RSSI_NONE;
+        if(pk > bars[b]) bars[b] = pk; /* peak-hold across bins in the bucket */
+    }
+    return nbars;
+}
+
+size_t census_recon_top_hits(CensusRecon* r, uint32_t* freqs, float* peaks, size_t max) {
+    size_t n = 0;
+    /* simple selection of the top `max` bins by peak RSSI among above-floor bins */
+    for(size_t k = 0; k < max; k++) {
+        int best = -1;
+        for(size_t i = 0; i < r->grid_n; i++) {
+            if(r->accum[i].above <= 0) continue;
+            /* skip already-selected */
+            bool used = false;
+            for(size_t j = 0; j < n; j++)
+                if(freqs[j] == (uint32_t)r->accum[i].freq_hz) used = true;
+            if(used) continue;
+            if(best < 0 || r->accum[i].peak_rssi > r->accum[best].peak_rssi) best = (int)i;
+        }
+        if(best < 0) break;
+        freqs[n] = (uint32_t)r->accum[best].freq_hz;
+        peaks[n] = r->accum[best].peak_rssi;
+        n++;
+    }
+    return n;
 }

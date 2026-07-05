@@ -13,12 +13,23 @@ CensusCampView* census_camp_view_alloc(void);
 void census_camp_view_free(CensusCampView* v);
 View* census_camp_view_get_view(CensusCampView* v);
 
-/* Called on OK (toggle list) and Back — the scene uses this to stop the worker on Back. */
+/* Called on Back from the live view — the scene uses this to stop the worker. */
 typedef void (*CensusCampViewBackCallback)(void* context);
 void census_camp_view_set_back_callback(
     CensusCampView* v,
     CensusCampViewBackCallback cb,
     void* ctx);
+
+/* Called when OK is pressed on a recent-hits row: jump to that capture in Review (worker keeps
+ * running, §6). `freq_hz` is the selected hit's frequency. */
+typedef void (*CensusCampViewJumpCallback)(void* context, uint32_t freq_hz);
+void census_camp_view_set_jump_callback(
+    CensusCampView* v,
+    CensusCampViewJumpCallback cb,
+    void* ctx);
+
+/* Show/hide an "SD LOW" banner (§6.1 SD full: captures stop, blip rows continue). */
+void census_camp_view_set_low(CensusCampView* v, bool low);
 
 /* Push the latest worker state into the view model (called from a refresh timer). */
 void census_camp_view_update(

@@ -78,6 +78,17 @@ void subcensus_scene_review_on_enter(void* context) {
     if(app->review_count == 0) {
         submenu_add_item(menu, "No captures yet", 999, review_cb, app);
     }
+
+    /* live-list jump (§6): preselect the newest row at the jumped-to frequency */
+    if(app->review_jump_freq) {
+        for(size_t i = app->review_count; i > 0; i--) {
+            if(app->review_freqs[i - 1] == app->review_jump_freq) {
+                submenu_set_selected_item(menu, (uint32_t)(i - 1));
+                break;
+            }
+        }
+        app->review_jump_freq = 0;
+    }
     view_dispatcher_switch_to_view(app->view_dispatcher, SubCensusViewSubmenu);
 }
 

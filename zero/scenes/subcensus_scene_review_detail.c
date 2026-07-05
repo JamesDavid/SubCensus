@@ -6,13 +6,15 @@
 #include "../shared/core/sc_freq_bands.h"
 #include "../shared/core/sc_sub.h"
 #include "../subcensuszero_i.h"
+#include "census_taxonomy.h"
 
 /* Capture detail (Zero §6): recompute the feature vector from the .sub, run gated k-NN against
  * the brain (System §6), and offer Label + Replay. Advisory only; never auto-relabels. */
 
 enum {
     DetailLabel = 0,
-    DetailReplay = 1
+    DetailReplay = 1,
+    DetailEdit = 2
 };
 
 static void detail_cb(void* context, uint32_t index) {
@@ -58,15 +60,18 @@ void subcensus_scene_review_detail_on_enter(void* context) {
         q.cadence_class = SC_CADENCE_NONE;
         ScKnnMatch m[3];
         size_t k = sc_knn_match(&q, brain->fps, brain->count, m, 3);
+        app->review_cand_class[0] = '\0';
+        app->review_cand_name[0] = '\0';
         if(k > 0) {
             int idx = m[0].index;
-            snprintf(
-                header,
-                sizeof(header),
-                "%s %s %d%%",
-                mhz,
-                brain->fps[idx].device_name ? brain->fps[idx].device_name : "?",
-                (int)(m[0].confidence * 100));
+            const char* dn = brain->fps[idx].device_name ? brain->fps[idx].device_name : "?";
+            snprintf(header, sizeof(header), "%s %s %d%%", mhz, dn, (int)(m[0].confidence * 100));
+            /* remember the candidate so the label picker can offer Accept (§6) */
+            const char* cls = census_class_id(brain->fps[idx].device_class);
+            strncpy(app->review_cand_class, cls, sizeof(app->review_cand_class) - 1);
+            app->review_cand_class[sizeof(app->review_cand_class) - 1] = '\0';
+            strncpy(app->review_cand_name, dn, sizeof(app->review_cand_name) - 1);
+            app->review_cand_name[sizeof(app->review_cand_name) - 1] = '\0';
         } else {
             snprintf(header, sizeof(header), "%s unknown", mhz);
         }
@@ -80,6 +85,7 @@ void subcensus_scene_review_detail_on_enter(void* context) {
     submenu_set_header(menu, header);
     submenu_add_item(menu, "Label device", DetailLabel, detail_cb, app);
     submenu_add_item(menu, "Replay to identify", DetailReplay, detail_cb, app);
+    submenu_add_item(menu, "Edit / analyze", DetailEdit, detail_cb, app);
     view_dispatcher_switch_to_view(app->view_dispatcher, SubCensusViewSubmenu);
 }
 
@@ -92,7 +98,14 @@ bool subcensus_scene_review_detail_on_event(void* context, SceneManagerEvent eve
     }
     if(event.event == DetailReplay) {
         /* Replay-to-identify -> the confirm-gated TX flow (§6, No defaulted). */
+        app->edit_from_tx = false; /* replay the stored .sub, not an edited frame */
         scene_manager_next_scene(app->scene_manager, SubCensusSceneReplayConfirm);
+        return true;
+    }
+    if(event.event == DetailEdit) {
+        /* Edit-before-transmit / field-map discovery (§6, System §7b). */
+        app->edit_nbits = 0; /* force a reload of the selected capture */
+        scene_manager_next_scene(app->scene_manager, SubCensusSceneEdit);
         return true;
     }
     return false;

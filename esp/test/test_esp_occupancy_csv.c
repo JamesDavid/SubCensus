@@ -36,5 +36,24 @@ int main(void) {
     SC_CHECK_INT(p.freq_hz, 315000000);
     SC_CHECK_INT(p.modulation, SC_MOD_OOK);
 
+    /* source column read for pin/exclude preservation across re-runs + Reset (System §9) */
+    char src[16];
+    SC_CHECK(esp_watchlist_parse_source("315000000,OOK,-90.0,0.1000,user-pin", src, sizeof(src)),
+             "source read");
+    SC_CHECK_STR(src, "user-pin");
+    SC_CHECK(esp_watchlist_parse_source("915000000,2-FSK,-85.0,0.8000,recon", src, sizeof(src)),
+             "recon source read");
+    SC_CHECK_STR(src, "recon");
+
+    /* occupancy row parses back for the cumulative-Recon accumulate merge (System §9) */
+    ScOccupancyBin ob;
+    SC_CHECK(esp_occupancy_parse_line("433920000,-97.0,-55.0,0.5000,3,2026-07-04T12:00:00", &ob),
+             "occupancy parsed");
+    SC_CHECK_INT(ob.freq_hz, 433920000);
+    SC_CHECK_DBL(ob.noise_floor, -97.0, 0.01);
+    SC_CHECK_DBL(ob.peak_rssi, -55.0, 0.01);
+    SC_CHECK_DBL(ob.occupancy, 0.5, 0.001);
+    SC_CHECK_INT(ob.crossings, 3);
+
     return sc_test_summary();
 }

@@ -61,8 +61,9 @@ against the SAME `shared/schema/`. So a Zero place and a Pi place are interchang
 ## Tests (no hardware)
 
 ```
-cd pi && python -m pytest         # 51 tests: DSP parity, collector, dashboard, multi-dongle,
-                                  # unknowns, MQTT, occupancy pass, shared brain, Places, field-map
+cd pi && python -m pytest         # 59 tests: DSP parity, collector, dashboard (sparklines,
+                                  # unknowns inspect, Bands), multi-dongle, unknowns, MQTT,
+                                  # occupancy pass, shared brain, Places, field-map
 ```
 
 rtl_433 is driven from **recorded JSON** fixtures (no dongle, no rtl_433 binary needed);
@@ -72,4 +73,4 @@ sweeps need hardware (`TODO(hw)`).
 
 ## Status
 
-**Complete — M0–M9** (all Pi §11 milestones). 51 tests green.
+**Complete — M0–M9** (all Pi §11 milestones), spec-delta zero. 59 tests green.

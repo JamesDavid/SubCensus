@@ -3,17 +3,26 @@
 /* Sweep live view (Zero §3.1). Cycles the watchlist (if present) or the preset list, reusing
  * the capture worker + the shared live view. Live RSSI/capture = TODO(hw). */
 
-#define SWEEP_EVENT_CAPTURE 0
+/* Kept clear of the DialogEx result range (0..2), which the no-recon hint uses (§3.1). */
+#define SWEEP_EVENT_CAPTURE 0x100
 
 static void sweep_worker_cb(void* context) {
     SubCensusApp* app = context;
     view_dispatcher_send_custom_event(app->view_dispatcher, SWEEP_EVENT_CAPTURE);
 }
 
+/* OK on a recent-hits row: jump to Review (worker keeps running, §6). */
+static void sweep_jump_cb(void* context, uint32_t freq_hz) {
+    SubCensusApp* app = context;
+    app->review_jump_freq = freq_hz;
+    scene_manager_next_scene(app->scene_manager, SubCensusSceneReview);
+}
+
 static void sweep_timer_cb(void* context) {
     SubCensusApp* app = context;
     CensusHit hits[8];
     size_t n = census_worker_recent_hits(app->worker, hits, 8);
+    census_camp_view_set_low(app->camp_view, census_sd_low(app->storage));
     census_camp_view_update(
         app->camp_view,
         app->live_sweep,
@@ -24,21 +33,30 @@ static void sweep_timer_cb(void* context) {
         n);
 }
 
-void subcensus_scene_sweep_on_enter(void* context) {
-    SubCensusApp* app = context;
-    app->live_sweep = true;
-
+/* Start the sweep worker on the active watchlist (if present) or the preset/custom fallback. */
+static void sweep_begin(SubCensusApp* app) {
     uint32_t freqs[16];
     size_t n = 0;
     if(app->settings.use_watchlist) {
         n = census_watchlist_freqs(app->storage, app->settings.place_id, freqs, 16);
     }
-    if(n == 0) { /* no valid recon -> fall back to the preset list, never blocked (System §9) */
-        for(size_t i = 0; i < census_freq_us_count && i < 16; i++)
-            freqs[i] = census_freq_us[i];
-        n = census_freq_us_count;
+    if(n == 0) { /* no valid recon -> fall back to the preset/custom list, never blocked (§9) */
+        if(app->settings.freq_preset == CensusFreqPresetCustom && app->settings.custom_count > 0) {
+            for(uint8_t i = 0; i < app->settings.custom_count && i < 16; i++)
+                freqs[i] = app->settings.custom_freqs[i];
+            n = app->settings.custom_count < 16 ? app->settings.custom_count : 16;
+        } else {
+            const uint32_t* list =
+                app->settings.freq_preset == CensusFreqPresetEU ? census_freq_eu : census_freq_us;
+            size_t cnt = app->settings.freq_preset == CensusFreqPresetEU ? census_freq_eu_count :
+                                                                           census_freq_us_count;
+            for(size_t i = 0; i < cnt && i < 16; i++)
+                freqs[i] = list[i];
+            n = cnt;
+        }
     }
 
+    census_camp_view_set_jump_callback(app->camp_view, sweep_jump_cb, app);
     census_worker_configure(app->worker, &app->settings, app->settings.place_id);
     census_worker_set_callback(app->worker, sweep_worker_cb, app);
     census_worker_start_sweep(app->worker, freqs, n, app->settings.dwell_ms);
@@ -48,9 +66,54 @@ void subcensus_scene_sweep_on_enter(void* context) {
     view_dispatcher_switch_to_view(app->view_dispatcher, SubCensusViewCamp);
 }
 
+static void sweep_hint_result(DialogExResult result, void* context) {
+    SubCensusApp* app = context;
+    view_dispatcher_send_custom_event(app->view_dispatcher, result);
+}
+
+void subcensus_scene_sweep_on_enter(void* context) {
+    SubCensusApp* app = context;
+    app->live_sweep = true;
+
+    /* No valid recon: never blocked, but show a dismissable hint (Zero §3.1 / System §9). */
+    uint32_t probe[16];
+    size_t nwl = app->settings.use_watchlist ?
+                     census_watchlist_freqs(app->storage, app->settings.place_id, probe, 16) :
+                     1; /* watchlist off -> no hint */
+    if(app->settings.use_watchlist && nwl == 0) {
+        DialogEx* d = app->dialog_ex;
+        dialog_ex_reset(d);
+        dialog_ex_set_context(d, app);
+        dialog_ex_set_header(d, "No recon here", 64, 4, AlignCenter, AlignTop);
+        dialog_ex_set_text(
+            d,
+            "Sweeping the default\nband list. Run Recon\nto focus revisit.",
+            64,
+            24,
+            AlignCenter,
+            AlignCenter);
+        dialog_ex_set_left_button_text(d, "Run Recon");
+        dialog_ex_set_right_button_text(d, "Proceed");
+        dialog_ex_set_result_callback(d, sweep_hint_result);
+        view_dispatcher_switch_to_view(app->view_dispatcher, SubCensusViewDialogEx);
+        return;
+    }
+    sweep_begin(app);
+}
+
 bool subcensus_scene_sweep_on_event(void* context, SceneManagerEvent event) {
     SubCensusApp* app = context;
-    if(event.type == SceneManagerEventTypeCustom && event.event == SWEEP_EVENT_CAPTURE) {
+    if(event.type != SceneManagerEventTypeCustom) return false;
+    if(event.event == DialogExResultRight) { /* Proceed on the preset/custom fallback */
+        sweep_begin(app);
+        return true;
+    }
+    if(event.event == DialogExResultLeft) { /* Run Recon now */
+        app->recon_fresh = false;
+        scene_manager_next_scene(app->scene_manager, SubCensusSceneReconRun);
+        return true;
+    }
+    if(event.event == SWEEP_EVENT_CAPTURE) {
         if(app->settings.notify != CensusNotifyOff) {
             notification_message(app->notifications, &sequence_blink_green_10);
         }

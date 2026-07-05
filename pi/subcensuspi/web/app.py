@@ -7,11 +7,13 @@ per request (cheap, thread-safe) rather than sharing one across the threadpool.
 
 from __future__ import annotations
 
+import json
 import os
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
 from pathlib import Path as _Path
@@ -21,6 +23,7 @@ from ..occupancy_pass import (
     read_occupancy_csv,
     read_watchlist_rows,
     reset_place,
+    run_pass_to_place,
     set_pin,
 )
 from ..taxonomy import class_ids, is_valid
@@ -30,9 +33,48 @@ TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 # Env var used by `uvicorn subcensuspi.web.app:app`; tests pass a path to create_app().
 DB_PATH_ENV = "SUBCENSUSPI_DB"
 
+# Unicode-block sparkline ramp (low -> high). Rendered inline in the Devices table (Pi §7);
+# self-contained (no SVG asset, no external JS/CDN) so the dashboard works fully offline.
+_SPARK_BLOCKS = " ▁▂▃▄▅▆▇█"
+
 
 def _row_to_dict(row) -> dict:
     return {k: row[k] for k in row.keys()}
+
+
+def _parse_ts(ts: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+
+
+def activity_buckets(timestamps: list[str], nbuckets: int = 24) -> list[int]:
+    """Bucket a device's reception timestamps into `nbuckets` equal-time bins over its
+    active span (first->last seen), returning per-bin reception counts. Drives the per-device
+    activity sparkline (Pi §7), read straight from the `events` SQLite log."""
+    parsed = sorted(t for t in (_parse_ts(x) for x in timestamps) if t is not None)
+    counts = [0] * nbuckets
+    if not parsed:
+        return counts
+    start = parsed[0].timestamp()
+    span = parsed[-1].timestamp() - start
+    if span <= 0:  # single reception (or all identical ts) -> newest bin
+        counts[-1] = len(parsed)
+        return counts
+    for t in parsed:
+        idx = int((t.timestamp() - start) / span * nbuckets)
+        counts[min(idx, nbuckets - 1)] += 1
+    return counts
+
+
+def sparkline(counts: list[int]) -> str:
+    """Render bucket counts as a unicode-block sparkline (Pi §7). Empty when no activity."""
+    hi = max(counts) if counts else 0
+    if hi == 0:
+        return ""
+    top = len(_SPARK_BLOCKS) - 1
+    return "".join(_SPARK_BLOCKS[round(c / hi * top)] for c in counts)
 
 
 def create_app(db_path: str, place: str | None = None, places_dir: str | None = None) -> FastAPI:
@@ -57,18 +99,53 @@ def create_app(db_path: str, place: str | None = None, places_dir: str | None = 
             p = place or app.state.place
             devices = [_row_to_dict(r) for r in db.list_devices(p)]
             events = [_row_to_dict(r) for r in db.recent_events(30, p)]
+            unknowns = [_row_to_dict(r) for r in db.list_unknowns(p)]
+            # per-device activity sparkline from the events log (Pi §7), rendered server-side.
+            sparklines = {
+                d["device_id"]: sparkline(activity_buckets(db.device_event_timestamps(d["device_id"])))
+                for d in devices
+            }
         finally:
             db.close()
+        # Bands: occupancy heatmap (ranked hot bins first) + derived watchlist (Pi §7, §9a).
+        d = place_dir(place)
+        occupancy = []
+        if d is not None:
+            occupancy = [
+                {"freq_hz": b.freq_hz, "noise_floor": b.noise_floor, "peak_rssi": b.peak_rssi,
+                 "occupancy": b.occupancy, "crossings": b.crossings, "last_seen": b.last_seen}
+                for b in read_occupancy_csv(d / "occupancy.csv")
+            ]
+            occupancy.sort(key=lambda r: r["occupancy"], reverse=True)
+        watchlist = read_watchlist_rows(d / "watchlist.csv") if d is not None else []
         return TEMPLATES.TemplateResponse(
             request=request,
             name="index.html",
             context={
                 "devices": devices,
                 "events": events,
+                "unknowns": unknowns,
+                "sparklines": sparklines,
+                "occupancy": occupancy,
+                "watchlist": watchlist,
                 "classes": class_ids(),
                 "place": p,
+                "has_bands": d is not None,
             },
         )
+
+    @app.get("/api/device/{device_id}/activity")
+    def api_device_activity(device_id: str, buckets: int = 24):
+        """Per-device activity sparkline data (Pi §7) — reception counts per time bin from the
+        `events` log, plus the rendered unicode-block sparkline (handy for scripting)."""
+        db = get_db()
+        try:
+            if db.get_device(device_id) is None:
+                raise HTTPException(status_code=404, detail="device not found")
+            counts = activity_buckets(db.device_event_timestamps(device_id), buckets)
+        finally:
+            db.close()
+        return {"device_id": device_id, "buckets": counts, "sparkline": sparkline(counts)}
 
     @app.get("/api/places")
     def api_places():
@@ -141,6 +218,32 @@ def create_app(db_path: str, place: str | None = None, places_dir: str | None = 
         set_pin(d, freq_hz, source=f"user-{action}")
         return JSONResponse({"ok": True, "freq_hz": freq_hz, "action": action})
 
+    @app.post("/api/recon/run")
+    def api_run(
+        place: str = Form(default=""),
+        mode: str = Form(default="accumulate"),
+        rtl_power_csv: str = Form(default=""),
+    ):
+        """Run an occupancy pass (Pi §7 Bands: Accumulate default / Fresh; cumulative per place,
+        System §9). A LIVE rtl_power sweep needs a dongle (TODO(hw)); the processing path is
+        driven from a recorded rtl_power CSV — pass `rtl_power_csv=` to run it off-device."""
+        d = place_dir(place or None)
+        if d is None:
+            raise HTTPException(status_code=400, detail="no places_dir configured")
+        if mode not in ("accumulate", "fresh"):
+            raise HTTPException(status_code=400, detail="mode must be accumulate|fresh")
+        if not rtl_power_csv:
+            # No recorded sweep given -> a live wideband sweep is required, which needs hardware.
+            raise HTTPException(
+                status_code=501,
+                detail="live rtl_power sweep requires a dongle (TODO(hw)); "
+                       "pass rtl_power_csv=<recorded sweep> to run the pass off-device",
+            )
+        if not _Path(rtl_power_csv).is_file():
+            raise HTTPException(status_code=400, detail="rtl_power_csv not found")
+        bins = run_pass_to_place(rtl_power_csv, d, fresh=(mode == "fresh"))
+        return JSONResponse({"ok": True, "mode": mode, "bins": len(bins)})
+
     @app.post("/api/recon/reset")
     def api_reset(place: str = Form(default=""), keep_pins: bool = Form(default=True)):
         d = place_dir(place or None)
@@ -156,6 +259,58 @@ def create_app(db_path: str, place: str | None = None, places_dir: str | None = 
             return [_row_to_dict(r) for r in db.list_unknowns(place or app.state.place)]
         finally:
             db.close()
+
+    @app.get("/api/unknown/{unknown_id}/inspect")
+    def api_unknown_inspect(unknown_id: int):
+        """Play/inspect an unknown from the review queue (Pi §6, §7): the pulse summary + the
+        saved IQ sample's metadata and a download link. Inspecting the *recorded* sample is
+        fully off-device (RF boundary); triggering a NEW live capture needs a dongle (TODO(hw))."""
+        db = get_db()
+        try:
+            row = db.get_unknown(unknown_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail="unknown not found")
+            row = _row_to_dict(row)
+        finally:
+            db.close()
+        iq_path = row.get("iq_path")
+        iq_available = bool(iq_path) and _Path(iq_path).is_file()
+        try:
+            pulse = json.loads(row.get("pulse_summary") or "{}")
+        except (json.JSONDecodeError, TypeError):
+            pulse = {}
+        return {
+            "id": unknown_id,
+            "ts": row.get("ts"),
+            "freq_hz": row.get("freq_hz"),
+            "source": row.get("source"),
+            "iq_path": iq_path,
+            "iq_available": iq_available,
+            "iq_bytes": _Path(iq_path).stat().st_size if iq_available else 0,
+            "pulse_summary": pulse,
+            # download the recorded .cu8 IQ; re-run offline `rtl_433 -r <file> -A` to reclassify.
+            "download_url": f"/api/unknown/{unknown_id}/iq" if iq_available else None,
+        }
+
+    @app.get("/api/unknown/{unknown_id}/iq")
+    def api_unknown_iq(unknown_id: int):
+        """Download the recorded IQ (`.cu8`) snippet for an unknown (Pi §4, §6). No live SDR:
+        this serves the sample captured on-device earlier; capturing a new one is TODO(hw)."""
+        db = get_db()
+        try:
+            row = db.get_unknown(unknown_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail="unknown not found")
+            iq_path = row["iq_path"]
+        finally:
+            db.close()
+        if not iq_path or not _Path(iq_path).is_file():
+            raise HTTPException(
+                status_code=404,
+                detail="no recorded IQ for this unknown (live capture requires a dongle: TODO(hw))",
+            )
+        return FileResponse(iq_path, media_type="application/octet-stream",
+                            filename=_Path(iq_path).name)
 
     @app.post("/api/unknown/{unknown_id}/label")
     def api_unknown_label(

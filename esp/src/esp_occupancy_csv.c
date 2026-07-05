@@ -51,3 +51,25 @@ bool esp_watchlist_parse_line(const char* line, ScWatchlistEntry* out) {
     out->occupancy = (float)atof(occ);
     return true;
 }
+
+bool esp_watchlist_parse_source(const char* line, char* dst, size_t cap) {
+    if(!line || !dst) return false;
+    return field(line, 4, dst, cap); /* freq,mod,thr,occ,SOURCE */
+}
+
+bool esp_occupancy_parse_line(const char* line, ScOccupancyBin* out) {
+    if(!line || !out) return false;
+    /* freq_hz,noise_floor,peak_rssi,occupancy,crossings,last_seen */
+    char freq[24], nf[24], pk[24], occ[24], cr[24];
+    if(!field(line, 0, freq, sizeof(freq)) || !field(line, 1, nf, sizeof(nf)) ||
+       !field(line, 2, pk, sizeof(pk)) || !field(line, 3, occ, sizeof(occ)) ||
+       !field(line, 4, cr, sizeof(cr)))
+        return false;
+    out->freq_hz = (int32_t)strtol(freq, NULL, 10);
+    out->noise_floor = (float)atof(nf);
+    out->peak_rssi = (float)atof(pk);
+    out->occupancy = (float)atof(occ);
+    out->crossings = (int32_t)strtol(cr, NULL, 10);
+    out->last_seen = 0; /* wall-clock not needed for the accumulate merge */
+    return true;
+}

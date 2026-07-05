@@ -48,6 +48,14 @@ static SubCensusApp* subcensus_app_alloc(void) {
     app->camp_view = census_camp_view_alloc();
     view_dispatcher_add_view(
         app->view_dispatcher, SubCensusViewCamp, census_camp_view_get_view(app->camp_view));
+    app->spectrum_view = census_spectrum_view_alloc();
+    view_dispatcher_add_view(
+        app->view_dispatcher,
+        SubCensusViewSpectrum,
+        census_spectrum_view_get_view(app->spectrum_view));
+    app->editor_view = census_editor_view_alloc();
+    view_dispatcher_add_view(
+        app->view_dispatcher, SubCensusViewEditor, census_editor_view_get_view(app->editor_view));
 
     view_dispatcher_attach_to_gui(app->view_dispatcher, app->gui, ViewDispatcherTypeFullscreen);
 
@@ -66,6 +74,8 @@ static void subcensus_app_free(SubCensusApp* app) {
     view_dispatcher_remove_view(app->view_dispatcher, SubCensusViewDialogEx);
     view_dispatcher_remove_view(app->view_dispatcher, SubCensusViewPopup);
     view_dispatcher_remove_view(app->view_dispatcher, SubCensusViewCamp);
+    view_dispatcher_remove_view(app->view_dispatcher, SubCensusViewSpectrum);
+    view_dispatcher_remove_view(app->view_dispatcher, SubCensusViewEditor);
 
     submenu_free(app->submenu);
     variable_item_list_free(app->var_item_list);
@@ -74,6 +84,8 @@ static void subcensus_app_free(SubCensusApp* app) {
     dialog_ex_free(app->dialog_ex);
     popup_free(app->popup);
     census_camp_view_free(app->camp_view);
+    census_spectrum_view_free(app->spectrum_view);
+    census_editor_view_free(app->editor_view);
     census_recon_free(app->recon);
     census_worker_free(app->worker);
 
@@ -90,7 +102,10 @@ int32_t subcensuszero_app(void* p) {
     UNUSED(p);
     SubCensusApp* app = subcensus_app_alloc();
     FURI_LOG_I("SubCensus", "SC boot app=subcensuszero place=%s", app->settings.place_id);
-    scene_manager_next_scene(app->scene_manager, SubCensusSceneStart);
+    /* No SD at launch -> blocking screen; monitoring disabled, About reachable (§6.1). */
+    scene_manager_next_scene(
+        app->scene_manager,
+        census_sd_present(app->storage) ? SubCensusSceneStart : SubCensusSceneSdRequired);
     view_dispatcher_run(app->view_dispatcher);
     subcensus_app_free(app);
     return 0;
