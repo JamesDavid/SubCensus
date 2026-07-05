@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="532" height="302" viewBox="0 0 532 302">
+<rect width="532" height="302" fill="#1a1a1a" rx="8"/>
+<rect x="10" y="10" width="512" height="256" fill="#FF8200"/>
+<rect x="10" y="18" width="512" height="52" fill="#000000"/>
+<text x="22" y="58" font-size="20" fill="#FF8200" text-anchor="start" font-family="'DejaVu Sans Mono','Consolas',monospace">Mode</text>
+<text x="510" y="58" font-size="20" fill="#FF8200" text-anchor="end" font-family="'DejaVu Sans Mono','Consolas',monospace">Camp</text>
+<text x="22" y="110" font-size="20" fill="#000000" text-anchor="start" font-family="'DejaVu Sans Mono','Consolas',monospace">Freq preset</text>
+<text x="510" y="110" font-size="20" fill="#000000" text-anchor="end" font-family="'DejaVu Sans Mono','Consolas',monospace">US ISM</text>
+<text x="22" y="162" font-size="20" fill="#000000" text-anchor="start" font-family="'DejaVu Sans Mono','Consolas',monospace">Edit custom list</text>
+<text x="510" y="162" font-size="20" fill="#000000" text-anchor="end" font-family="'DejaVu Sans Mono','Consolas',monospace">2 freqs</text>
+<text x="22" y="214" font-size="20" fill="#000000" text-anchor="start" font-family="'DejaVu Sans Mono','Consolas',monospace">Recon grid</text>
+<text x="510" y="214" font-size="20" fill="#000000" text-anchor="end" font-family="'DejaVu Sans Mono','Consolas',monospace">Hybrid</text>
+<text x="266" y="294" font-size="15" fill="#bbbbbb" text-anchor="middle" font-family="'DejaVu Sans Mono','Consolas',monospace">placeholder mock · Settings (§4)</text>
+</svg>

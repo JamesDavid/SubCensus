@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="532" height="302" viewBox="0 0 532 302">
+<rect width="532" height="302" fill="#1a1a1a" rx="8"/>
+<rect x="10" y="10" width="512" height="256" fill="#FF8200"/>
+<text x="18" y="46" font-size="23" fill="#000000" text-anchor="start" font-family="'DejaVu Sans Mono','Consolas',monospace">Review captures</text>
+<rect x="10" y="66" width="512" height="48" fill="#000000"/>
+<text x="22" y="102" font-size="20" fill="#FF8200" text-anchor="start" font-family="'DejaVu Sans Mono','Consolas',monospace">433.92 AcmeWx</text>
+<text x="22" y="150" font-size="20" fill="#000000" text-anchor="start" font-family="'DejaVu Sans Mono','Consolas',monospace">315.00 unknown</text>
+<text x="22" y="198" font-size="20" fill="#000000" text-anchor="start" font-family="'DejaVu Sans Mono','Consolas',monospace">433.92 garage</text>
+<text x="22" y="246" font-size="20" fill="#000000" text-anchor="start" font-family="'DejaVu Sans Mono','Consolas',monospace">915.00 unknown</text>
+<text x="266" y="294" font-size="15" fill="#bbbbbb" text-anchor="middle" font-family="'DejaVu Sans Mono','Consolas',monospace">placeholder mock · Review captures</text>
+</svg>

@@ -54,6 +54,25 @@ capture / TX are on-device validation steps, not automated tests. **Monitoring i
 — Sweep/Camp/Recon never transmit; Replay/Edit-TX (Zero, Esp) is the only TX path, explicit
 and TX-allow-list gated.
 
+## Using the sensors
+
+Each target has a **screen/page-by-screen usage walkthrough** in its own README:
+
+- **SubCensusZero** — [`zero/README.md`](./zero/README.md) → *"Using it — screen by screen"*:
+  every FAP scene (Recon → Sweep/Camp → Review → Edit) with a mockup of each screen.
+- **SubCensusPi** — [`pi/README.md`](./pi/README.md) → *"Using the dashboard"*:
+  the web dashboard (Devices + sparklines, Live feed, Unknowns, Bands).
+- **SubCensusEsp** — [`esp/README.md`](./esp/README.md) → *"Web UI + API"*:
+  the tabbed web UI (Live, Review, Bands, Field-map, Places, Settings).
+
+<p align="center">
+  <img src="./zero/docs/screens/05_recon_spectrum.svg" width="300" alt="Zero Recon spectrum strip">
+  <img src="./zero/docs/screens/11_camp_live.svg" width="300" alt="Zero Camp live view">
+</p>
+
+> The Flipper screens in `zero/docs/screens/` are **placeholder mockups** modelled from the draw
+> code, to be swapped for real qFlipper captures once the FAP runs on hardware.
+
 ## Host-side tests (no hardware)
 
 ```

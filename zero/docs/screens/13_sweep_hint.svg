@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="532" height="302" viewBox="0 0 532 302">
+<rect width="532" height="302" fill="#1a1a1a" rx="8"/>
+<rect x="10" y="10" width="512" height="256" fill="#FF8200"/>
+<text x="266" y="50" font-size="23" fill="#000000" text-anchor="middle" font-family="'DejaVu Sans Mono','Consolas',monospace">No recon here</text>
+<text x="266" y="114" font-size="20" fill="#000000" text-anchor="middle" font-family="'DejaVu Sans Mono','Consolas',monospace">Sweeping the default</text>
+<text x="266" y="154" font-size="20" fill="#000000" text-anchor="middle" font-family="'DejaVu Sans Mono','Consolas',monospace">band list. Run Recon</text>
+<text x="266" y="194" font-size="20" fill="#000000" text-anchor="middle" font-family="'DejaVu Sans Mono','Consolas',monospace">to focus revisit.</text>
+<rect x="18" y="218" width="160" height="44" fill="#000000"/>
+<text x="98" y="250" font-size="20" fill="#FF8200" text-anchor="middle" font-family="'DejaVu Sans Mono','Consolas',monospace">Run Recon</text>
+<rect x="354" y="218" width="160" height="44" fill="#000000"/>
+<text x="434" y="250" font-size="20" fill="#FF8200" text-anchor="middle" font-family="'DejaVu Sans Mono','Consolas',monospace">Proceed</text>
+<text x="266" y="294" font-size="15" fill="#bbbbbb" text-anchor="middle" font-family="'DejaVu Sans Mono','Consolas',monospace">placeholder mock · Sweep no-recon hint (§3.1)</text>
+</svg>

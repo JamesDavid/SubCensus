@@ -22,6 +22,121 @@ python -m ufbt launch       # deploy over USB, or copy the .fap to the SD /apps/
 If your device runs Unleashed/Momentum, re-pin the SDK to that firmware (subghz symbol
 names differ) and re-verify.
 
+## Using it — screen by screen
+
+> The images below are **placeholder mockups** (`docs/screens/*.svg`), modelled from the scene
+> draw code — not real device captures. Regenerate with `python zero/docs/make_screens.py`.
+> Replace each with a real qFlipper screenshot (same filename) once hardware is available.
+
+The intended flow is a **pipeline**: **Recon** once to learn what's active here → it writes a
+watchlist → **Sweep/Camp** monitor using it → **Review** to label captures → optionally **Edit**
+to replay/identify or reverse-engineer. Everything writes under the active **Place**.
+
+### Main menu
+
+![Main menu](docs/screens/01_main_menu.svg)
+
+The active **Place** is shown at the top (tap to switch/manage). Up/Down move, **OK** selects,
+**Back** exits. Items: **Run Recon · Recon results · Start Sweep · Start Camp · Review captures ·
+Settings · About**. Monitoring items are disabled (routed to the SD screen) if the card is out.
+
+### Settings (§4)
+
+![Settings](docs/screens/02_settings.svg)
+
+A `VariableItemList`: **Left/Right** change a value, **OK** on *Edit custom list* opens the
+frequency editor. Covers Mode, Freq preset (US/EU/**Custom**), Camp freq, Recon grid/step, Survey
+minutes, RSSI threshold (or **Auto**), Capture preset (incl. **Dual**), Dwell, Capture-max,
+Signal-end gap, Min-gap, Auto-classify, Match-DB, Notify. Saved on **Back**.
+
+### Places
+
+![Places](docs/screens/03_places.svg)
+
+The active place is marked `*`. Create (text-input name), Rename, Delete (confirm — removes the
+place folder only, never the global `signatures/`), or Set active. Each place keeps its own
+occupancy/watchlist/census_log/captures; the brain is global.
+
+### Recon (discovery)
+
+![Run Recon](docs/screens/04_recon_run.svg)
+
+Run Recon first prompts **Accumulate** (default — merges into this place's occupancy so coverage
+improves each pass) or **Fresh** (clears first). Then the live "surfing" view opens:
+
+![Recon spectrum strip](docs/screens/05_recon_spectrum.svg) ![Recon top hits](docs/screens/06_recon_hits.svg)
+
+**Top pane** — a spectrum/activity strip (RSSI bars across the segment being swept, peak-hold-with-
+decay, a cursor at the current sample) that **auto-follows** the sweep across the CC1101 segments
+(300–348 / 387–464 / 779–928 MHz). **Left/Right** page a segment manually; **OK** toggles to a live
+**top-hits** mini-list. **Bottom pane** — segment · freq · hot-bin count · pass · elapsed (always
+visible). **Back** stops. On completion it writes `occupancy.csv` + `watchlist.csv` and opens:
+
+![Recon results](docs/screens/07_recon_results.svg) ![Entry actions](docs/screens/08_recon_entry.svg) ![Reset recon](docs/screens/09_recon_reset.svg)
+
+**Recon results** ranks the watchlist (freq · occupancy% · PIN/EXCL tag). Select an entry for
+**Pin / Exclude / Camp-here**; pins/exclusions persist across re-runs. **Reset recon** is
+confirm-gated and prompts **Keep pins / Wipe pins** (touches recon artifacts only). Empty place →
+a "No recon — Run Recon" shortcut.
+
+### Sweep & Camp (monitor)
+
+**Start Camp** first opens the frequency picker; **Start Sweep** cycles the watchlist (or the
+preset/custom list) and — with no recon — shows a dismissable hint first:
+
+![Camp picker](docs/screens/10_camp_picker.svg) ![Sweep no-recon hint](docs/screens/13_sweep_hint.svg)
+
+The **Camp picker** offers **Auto (busiest watchlist)** · watchlist hot-bins · allowed presets ·
+**Manual entry** (a number-entry validated against the RX allow-list). Auto is greyed with no
+watchlist. Then the shared live view runs:
+
+![Camp/Sweep live](docs/screens/11_camp_live.svg) ![Recent hits](docs/screens/12_recent_hits.svg)
+
+CAMP/SWEEP header, frequency, an **RSSI bar**, and a hits counter; each capture flashes the LED
+(and vibro, per Settings). **OK** toggles the **recent-hits list** — Up/Down scroll, **OK on a row
+jumps to that capture in Review** (the worker keeps running), **Back** returns to the live view.
+Monitoring is **passive** — it never transmits. If the SD runs low, captures pause to RSSI-only
+"blip" rows and an **SD LOW** banner shows.
+
+### Review & labeling
+
+![Review](docs/screens/14_review.svg) ![Capture detail](docs/screens/15_review_detail.svg) ![Label picker](docs/screens/16_review_label.svg)
+
+**Review captures** lists `census_log` rows (freq · match/label). The **detail** view recomputes
+the feature vector from the `.sub`, runs gated k-NN against the brain, and shows the top candidate
++ confidence, with **Label device · Replay to identify · Edit / analyze**. The **label picker**
+lets you **Accept** the candidate or pick from the shared taxonomy — it writes the `label` column
+in place **and** appends the vector to the global `fingerprints.csv` (`source=user`, the
+active-learning loop).
+
+### Replay & the M10 editor (the only TX path)
+
+![Replay confirm](docs/screens/17_replay_confirm.svg) ![Edit menu](docs/screens/18_edit_menu.svg)
+
+**Replay to identify** re-transmits your own capture on its stored freq/preset — **confirm-gated
+with No defaulted**, showing freq + preset, and greyed if the firmware TX allow-list forbids the
+band. **Edit / analyze** opens the M10 editor menu:
+
+![Raw hex](docs/screens/19_edit_raw.svg) ![Structured fields](docs/screens/20_edit_fields.svg) ![Field-map discovery](docs/screens/21_edit_discovery.svg)
+
+- **Raw bit/hex edit** — the frame as hex; Up/Down pick a byte, Left/Right adjust it.
+- **Structured fields** (known protocol) — labeled fields from the field-map; Left/Right change a
+  field's value and the **checksum is recomputed** automatically. A decode-back gate blocks a Send
+  that doesn't re-decode cleanly.
+- **Field-map discovery** (unknowns) — seeds a proposed structure from the passive **differential**
+  analysis over the same-device capture corpus; Left/Right relabel each segment's class. **Propose
+  field-map** writes a `signatures/field_maps/<proto>.fmap` entry (you confirm — never
+  auto-committed). **Send edited frame** rides the same guarded single-frame TX path for
+  **own-device active confirmation** and is logged distinctly in `edits_log.csv`.
+
+### About & SD states
+
+![SD required](docs/screens/22_sd_required.svg) ![About](docs/screens/23_about.svg)
+
+With no SD card the app shows a blocking **SD card required** screen (About still reachable) and
+auto-recovers when a card is inserted. **About** shows the app version, the SDK/API it was built
+against, the passive-monitoring note, storage tier + free space, and the expected battery drain.
+
 ## Generated files (do not hand-edit)
 
 `census_taxonomy.h` and `census_schema.h` are **generated** from `shared/taxonomy.yaml` +

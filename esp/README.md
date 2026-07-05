@@ -43,12 +43,39 @@ pinned to one core, WiFi/web to the other.
 
 ## Web UI + API (headless — the UI replaces the screen)
 
-Full single-page UI served from LittleFS `data/index.html`: **Live feed** (WebSocket),
-**Review/label** (candidates + confirm-appends-fingerprint), **Bands** (occupancy/watchlist +
-recon), **Places**, **Settings**. JSON API: `/api/status`, `/api/captures`, `/api/candidates`,
+The ESP has no display; its UI **is** a tabbed single page served from LittleFS
+`data/index.html` (self-contained, no CDN). Browse to the node's IP after it joins WiFi. The
+header shows the node status (version · place · mode · WiFi · CC1101 · **TX enabled**). A top nav
+switches tabs:
+
+- **Live** — the WebSocket capture stream: each hit appears as `freq · model/unknown · RSSI` the
+  moment it's logged, so you can watch activity in real time.
+- **Review / label** — the `census_log` table with the top classification **candidates** per row;
+  a **label** button assigns a `device_class` (accept a candidate or pick from the taxonomy),
+  which writes the label **and** appends the feature vector to the global brain
+  (confirm-appends-fingerprint, System §6).
+- **Bands** — the recon surface: **Run (accumulate)** / **Run (fresh)** / **Reset (keep pins)** /
+  **Reset (wipe pins)** (System §9), then the ranked occupancy heatmap + derived watchlist with
+  per-entry **pin / exclude**.
+- **Field-map** (System §7b) — reverse-engineer an unknown: paste same-device `.sub` paths or hex
+  frames + a signature and press **Analyze** → a **differential overlay** proposes byte segments
+  (each row's **class / name / semantics** editable) with a corpus-discovered checksum; **Confirm
+  → field_maps/** writes the user-confirmed `.fmap` entry (never auto-committed). The edit box +
+  **Re-sign** recompute the checksum, and **Transmit 1 frame** rides the guarded, TX-allow-list-
+  gated single-frame path for **own-device active confirmation** (off unless *TX enabled*).
+- **Places** — list / create / switch the active place (each keeps its own occupancy/watchlist/
+  census_log; the brain is global).
+- **Settings** — a form for Mode, Freq list, Capture preset (incl. Dual), Use-watchlist, RSSI
+  auto/threshold, Dwell, Capture-max, Survey minutes, Auto-classify, Match-DB, **TX enabled**,
+  and WiFi/MQTT credentials; **Save** persists to NVS/LittleFS.
+
+**JSON API** (everything scriptable): `/api/status`, `/api/captures`, `/api/candidates`,
 `/api/label`, `/api/occupancy`, `/api/watchlist`, `/api/recon`, `/api/sweep`, `/api/camp`,
-`/api/settings`, `/api/places`, `/api/place`, `/api/brain/sync`, and the fixture-inject
-`/api/debug/inject` (drives the full decode→classify→log→WS path with no live RF, Esp §3.4).
+`/api/settings`, `/api/places`, `/api/place`, `/api/brain/sync`, the field-map endpoints
+(`/api/fieldmap`, `/api/fieldmap/confirm`, `/api/fieldmap/resign`, `/api/fieldmap/tx`,
+`/api/fieldmaps`), and the fixture-inject `/api/debug/inject` — which drives the full
+decode→classify→log→WS path with **no live RF** (Esp §3.4), so you can exercise the whole UI
+against a flashed node before any antenna work.
 
 ## Storage (Esp §4)
 

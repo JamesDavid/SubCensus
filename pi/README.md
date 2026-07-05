@@ -33,6 +33,40 @@ Config is `config.example.yaml` (Pi §8): dongles (single-hop or multi-dongle by
 `place`, `places_dir`, global `signatures_dir`, `iq_dir` + `max_iq_gb` disk guard, MQTT/HA,
 web host/port. Two systemd services in production (Pi §9): `collector` + `web`.
 
+## Using the dashboard — section by section
+
+Open `http://<host>:8080/`. It's a **single self-hosted page** (no external JS/CDN, works
+offline), auto-refreshing on a poll. The header shows `place: <active>` and a device count.
+Everything is **RX-only** — there is no transmit control anywhere in the UI.
+
+- **Devices** (main table) — one row per grouped device: **Model · ID/Ch · Band · Count · Last
+  seen · Activity · SNR · Label / Room / Class**. The **Activity** column is a unicode-block
+  **sparkline** of that device's recent reception bins (straight from the SQLite event log), so
+  you can see cadence at a glance. The **Label / Room / Class** cell has `label`/`room` inputs + a
+  `device_class` dropdown and a **save** button — saving writes the catalog row **and** feeds the
+  global active-learning brain (System §6). This is the everyday "identify what's around me" view.
+- **Live feed** (right column) — the newest decoded events as they land (`time · freq · model ·
+  SNR`, plus `room` when the device is labeled), newest first. Confirms the collector is hearing
+  things without reloading.
+- **Unknowns — review queue** — undecodable captures needing a human: **Time · Band · Pulse
+  summary · Sample · Class**. **Sample** links to `inspect`/download the recorded IQ (`.cu8`) so
+  you can eyeball or replay it in an external tool; you assign a class + notes or discard. (Shows
+  "No unknowns captured" when the corpus is clean, as in the fixture above.)
+- **Bands — occupancy heatmap & watchlist** — the recon surface. The **Recon** buttons run
+  **Run (Accumulate)** / **Run (Fresh)** / **Reset (keep pins)** / **Reset (wipe pins)** (System
+  §9, from a recorded `rtl_power` sweep; a live sweep is `TODO(hw)`). Below, the ranked
+  `occupancy.csv` (**Freq · Occupancy · Peak · Noise · Crossings · Last seen**) and the derived
+  `watchlist.csv` with per-entry **pin / exclude**. Needs `places_dir` set in the config.
+
+**Scripting / headless:** every view has a JSON endpoint — `GET /api/devices`,
+`/api/device/{id}/activity` (sparkline bins), `/api/occupancy`, `/api/watchlist`,
+`/api/unknown/{id}/inspect` (+ `/iq`); `POST /api/label`, `/api/recon`, `/api/watchlist/pin`.
+
+**Places, field-maps, and LLM analysis are not web tabs** (they're not per-session UI): the active
+place is set in `config.yaml` (`place:`); field-map discovery runs passively over the events
+corpus with `python -m subcensuspi.fieldmap` (System §7b, RX-only — labeling, no active confirm);
+and `export_place` / `analyze_place` produce the analysis bundle + `analysis.json`/`.md` offline.
+
 ## Architecture
 
 ```

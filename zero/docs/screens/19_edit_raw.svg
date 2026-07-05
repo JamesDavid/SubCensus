@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="532" height="302" viewBox="0 0 532 302">
+<rect width="532" height="302" fill="#1a1a1a" rx="8"/>
+<rect x="10" y="10" width="512" height="256" fill="#FF8200"/>
+<text x="18" y="42" font-size="20" fill="#000000" text-anchor="start" font-family="'DejaVu Sans Mono','Consolas',monospace">Raw hex  Up/Dn:byte L/R:+-</text>
+<rect x="14" y="66" width="56" height="40" fill="#000000"/>
+<text x="18" y="98" font-size="20" fill="#FF8200" text-anchor="start" font-family="'DejaVu Sans Mono','Consolas',monospace">A5</text>
+<text x="78" y="98" font-size="20" fill="#000000" text-anchor="start" font-family="'DejaVu Sans Mono','Consolas',monospace">3C</text>
+<text x="138" y="98" font-size="20" fill="#000000" text-anchor="start" font-family="'DejaVu Sans Mono','Consolas',monospace">10</text>
+<text x="198" y="98" font-size="20" fill="#000000" text-anchor="start" font-family="'DejaVu Sans Mono','Consolas',monospace">B9</text>
+<text x="18" y="258" font-size="20" fill="#000000" text-anchor="start" font-family="'DejaVu Sans Mono','Consolas',monospace">byte 0 = 165</text>
+<text x="266" y="294" font-size="15" fill="#bbbbbb" text-anchor="middle" font-family="'DejaVu Sans Mono','Consolas',monospace">placeholder mock · Raw bit/hex editor</text>
+</svg>
