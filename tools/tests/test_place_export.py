@@ -145,6 +145,39 @@ def test_unknown_field_discovery_from_captures(tmp_path):
     assert fd["checksum"] is not None and fd["checksum"]["kind"] == 1  # CK_XOR
 
 
+# --- S-A6: full §7 feature vector for unknowns (System §8) ---
+
+def test_unknown_feature_vector_from_captures(tmp_path):
+    d = tmp_path / "home_4d5e"
+    (d / "captures").mkdir(parents=True)
+    # 3 aligned 32-bit frames captured with a 2-FSK preset at 400 us/symbol
+    for name, h in [("d.sub", "a50014b1"), ("e.sub", "a50114b0"), ("f.sub", "a50215b2")]:
+        (d / "captures" / name).write_text(_sub_from_hex(h, unit=400), encoding="utf-8")
+    log = (
+        "ts_iso,freq_hz,rssi_dbm,duration_ms,preset,fsk_suspected,protocol,key,match_name,"
+        "match_class,match_conf,match_source,sub_file,label\n"
+        "2026-07-04T12:03:00,315000000,-70.0,0,2FSK,1,,,,,0.00,,captures/d.sub,\n"
+        "2026-07-04T12:04:00,315000000,-70.0,0,2FSK,1,,,,,0.00,,captures/e.sub,\n"
+        "2026-07-04T12:05:00,315000000,-70.0,0,2FSK,1,,,,,0.00,,captures/f.sub,\n"
+    )
+    (d / "census_log.csv").write_text(log, encoding="utf-8", newline="")
+    bundle = build_bundle(d)
+    fv = bundle["unknowns"][0]["feature_vector"]
+    # all §7 waveform fields present
+    for k in ("freq_bin", "modulation", "sym_dur_us", "n_symbols", "est_bitrate",
+              "preamble_len", "repeat_count"):
+        assert k in fv, k
+    # and sane for a 315 MHz 2-FSK frame at 400 us/symbol
+    assert fv["freq_bin"] == 315000000
+    assert fv["modulation"] == "2-FSK"
+    assert fv["sym_dur_us"] and abs(fv["sym_dur_us"][0] - 400) <= 100
+    assert fv["n_symbols"] == 32          # 32 bits, all one pulse each
+    assert abs(fv["est_bitrate"] - 2500) <= 400  # ~1e6/400
+    assert fv["preamble_len"] >= 1
+    assert fv["repeat_count"] == 1        # single frame, no interior gaps
+    assert fv["n_captures"] == 3
+
+
 # --- S-A5: occupancy coverage gaps ---
 
 def test_occupancy_coverage_gaps(zero_place):

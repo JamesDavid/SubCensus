@@ -10,6 +10,10 @@ import yaml
 
 from .paths import shared_taxonomy_path
 
+# Hand-copy of the shared/taxonomy.yaml (§5) vocabulary, used ONLY when the yaml can't be
+# located (packaged without the repo). shared/taxonomy.yaml stays the single source of truth
+# (System §10): a drift guard — pi/tests/test_taxonomy.py — asserts this list equals the current
+# yaml vocabulary, so a future yaml edit can't silently diverge from this fallback.
 _FALLBACK = [
     "garage", "car-fob", "tpms", "weather", "doorbell", "pir-motion",
     "energy-meter", "water/gas-meter", "remote", "thermostat",

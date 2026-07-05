@@ -11,6 +11,7 @@
 #include <Arduino.h>
 #include <ArduinoOTA.h>
 #include <AsyncTCP.h>
+#include <DNSServer.h> // ESP32 Arduino core — captive-portal DNS in SoftAP mode (Esp §6)
 #include <ESPAsyncWebServer.h>
 #include <HTTPClient.h>
 #include <LittleFS.h>
@@ -822,12 +823,56 @@ static void sweep_start() {
 
 // --- networking ---
 
+// Captive portal (Esp §6 WiFi provisioning): when no credentials are committed we fall back to an
+// open SoftAP so the browser Settings form can take WiFi/MQTT config. To make a phone auto-pop that
+// form on join, run a wildcard DNS server (resolves every lookup to our AP IP) and 302 the OS
+// connectivity-probe URLs to the config page. Only active in AP mode — never when joined to a real
+// network. The DNS + redirect wiring is hardware-independent (exercised here); a phone actually
+// popping the portal is TODO(hw).
+static DNSServer g_dns;
+static volatile bool g_ap_mode = false;
+
+// 302 a request to the node's config page (the single-page UI that hosts the Settings form).
+static void captive_redirect(AsyncWebServerRequest* req) {
+    req->redirect("http://" + WiFi.softAPIP().toString() + "/");
+}
+
+// Register the OS captive-portal probe URLs (Android /generate_204+/gen_204, Apple
+// /hotspot-detect.html, Windows /ncsi.txt+/connecttest.txt) plus a catch-all onNotFound. In AP mode
+// each 302s to the config page so the portal pops; in STA mode the node isn't the gateway so these
+// aren't probed — the guard just returns an empty 204 rather than redirecting.
+static void captive_register(AsyncWebServer& s) {
+    auto probe = [](AsyncWebServerRequest* req) {
+        if(g_ap_mode)
+            captive_redirect(req);
+        else
+            req->send(204);
+    };
+    const char* probes[] = {"/generate_204", "/gen_204", "/hotspot-detect.html",
+                            "/ncsi.txt", "/connecttest.txt"};
+    for(auto p : probes) s.on(p, HTTP_GET, probe);
+    s.onNotFound([](AsyncWebServerRequest* req) {
+        if(g_ap_mode)
+            captive_redirect(req); // unknown path in AP mode -> config page (catch-all portal)
+        else
+            req->send(404, "application/json", "{\"error\":\"not found\"}");
+    });
+}
+
 static void wifi_start() {
     if(strlen(g_settings.wifi_ssid) == 0) {
+        g_ap_mode = true;
         WiFi.mode(WIFI_AP);
-        WiFi.softAP("SubCensusEsp-setup"); // TODO(hw): config portal (Esp §6)
+        WiFi.softAP("SubCensusEsp-setup"); // open AP; Settings form takes WiFi/MQTT config (Esp §6)
+        // Wildcard DNS: resolve EVERY lookup to our AP IP so the phone's probe hits us and the
+        // captive-portal handlers (captive_register) redirect it to the config page.
+        g_dns.setErrorReplyCode(DNSReplyCode::NoError);
+        g_dns.start(53, "*", WiFi.softAPIP());
+        Serial.printf("SC wifi mode=ap ssid=SubCensusEsp-setup ip=%s captive=on\n",
+                      WiFi.softAPIP().toString().c_str());
         return;
     }
+    g_ap_mode = false;
     WiFi.mode(WIFI_STA);
     WiFi.begin(g_settings.wifi_ssid, g_settings.wifi_pass);
     configTime(0, 0, "pool.ntp.org", "time.nist.gov");
@@ -1689,6 +1734,9 @@ static void web_start() {
             (void)total;
             handle_inject(req, data, len);
         });
+    // Captive-portal probe URLs + catch-all (Esp §6) — active only in SoftAP provisioning mode.
+    // Registered after the API routes so specific handlers win; onNotFound is the fallback.
+    captive_register(g_server);
     g_server.begin();
 }
 
@@ -1727,6 +1775,7 @@ void setup() {
 }
 
 void loop() {
+    if(g_ap_mode) g_dns.processNextRequest(); // service captive-portal DNS while in SoftAP mode
     ArduinoOTA.handle();
     mqtt_ensure();
     g_mqtt.loop();

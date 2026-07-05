@@ -60,6 +60,10 @@ void census_worker_start_sweep(
 void census_worker_stop(CensusWorker* worker);
 bool census_worker_is_running(CensusWorker* worker);
 
+/* Pause/resume monitoring in place (§6, optional long-press OK) — RX stays tuned, no capture. */
+void census_worker_set_paused(CensusWorker* worker, bool paused);
+bool census_worker_is_paused(CensusWorker* worker);
+
 /* Live-view accessors (read by the scene's draw callback). */
 float census_worker_rssi(CensusWorker* worker);
 uint32_t census_worker_current_freq(CensusWorker* worker);

@@ -22,6 +22,7 @@
 #define CENSUS_SUB_BUF     20480
 #define CENSUS_AUTO_MARGIN 12.0f /* Auto threshold = noise floor + margin (§4) */
 #define CENSUS_CAL_MS      2000 /* Auto noise-floor sample window (§4) */
+#define CENSUS_DEDUP_MS    3000 /* identical-decode dedup window — a repeated press burst (§7) */
 
 struct CensusWorker {
     FuriThread* thread;
@@ -74,6 +75,12 @@ struct CensusWorker {
     volatile uint32_t current_freq;
     volatile uint32_t hits;
     uint32_t start_tick;
+    volatile bool paused; /* long-press OK pause/resume (§6, optional) */
+
+    /* identical-decode dedup (§7): collapse a burst of the same decoded frame to one capture */
+    char last_dec_name[24];
+    uint32_t last_dec_freq;
+    uint32_t last_dec_tick;
 
     CensusHit recent[CENSUS_RECENT_CAP];
     size_t recent_len;
@@ -263,6 +270,26 @@ static void census_process_capture(CensusWorker* w, uint32_t freq, float rssi, f
                                                                                                0;
     w->last_fsk_suspected = fsk_suspected;
 
+    /* identical-decode dedup (§7): a remote fires a frame many times per press — collapse a
+     * burst of the SAME decoded protocol on the SAME freq within a short window to one capture. */
+    uint32_t now = furi_get_tick();
+    if(w->decoded && w->last_dec_freq == freq && w->last_dec_name[0] &&
+       strcmp(w->decoded_name, w->last_dec_name) == 0 &&
+       (now - w->last_dec_tick) < CENSUS_DEDUP_MS) {
+        w->last_dec_tick = now;
+        w->timings_len = 0;
+        w->overflow = false;
+        return; /* suppress the duplicate — no .sub, no log row, no notify */
+    }
+    if(w->decoded) {
+        strncpy(w->last_dec_name, w->decoded_name, sizeof(w->last_dec_name) - 1);
+        w->last_dec_name[sizeof(w->last_dec_name) - 1] = '\0';
+        w->last_dec_freq = freq;
+    } else {
+        w->last_dec_name[0] = '\0'; /* an unknown breaks the dedup run */
+    }
+    w->last_dec_tick = now;
+
     ScFeatureVector fv;
     sc_feature_compute(w->timings, n, (int32_t)freq, census_preset_modulation(w->preset), &fv);
 
@@ -413,6 +440,12 @@ static void census_monitor_freq(CensusWorker* w, uint32_t freq, float thr, uint3
     uint32_t quiet_since = 0;
 
     while(w->running) {
+        if(w->paused) { /* long-press OK pause (§6): hold RX, capture nothing */
+            capturing = false;
+            furi_delay_ms(30);
+            if(window_ms && (furi_get_tick() - start) >= window_ms) break;
+            continue;
+        }
         float rssi = subghz_devices_get_rssi(w->device);
         w->rssi = rssi;
         uint32_t now = furi_get_tick();
@@ -591,6 +624,14 @@ void census_worker_stop(CensusWorker* w) {
 
 bool census_worker_is_running(CensusWorker* w) {
     return w->running;
+}
+
+void census_worker_set_paused(CensusWorker* w, bool paused) {
+    w->paused = paused;
+}
+
+bool census_worker_is_paused(CensusWorker* w) {
+    return w->paused;
 }
 
 float census_worker_rssi(CensusWorker* w) {

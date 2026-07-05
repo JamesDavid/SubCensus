@@ -49,6 +49,7 @@ typedef enum {
     SubCensusTextModeRenamePlace = 1,
     SubCensusTextModeManualFreqCustom = 2, /* manual MHz -> add to custom list (§6) */
     SubCensusTextModeManualFreqCamp = 3, /* manual MHz -> camp here (§6) */
+    SubCensusTextModeSetLocation = 4, /* place location tag (§5.6) */
 } SubCensusTextMode;
 
 /* Edit-before-transmit / field-map discovery mode (M10, §6/§7b). */
@@ -90,6 +91,7 @@ typedef struct {
      * sliced to a bit frame (sc_slice) that the raw/structured/discovery editors operate on. */
     uint8_t edit_mode; /* SubCensusEditMode */
     uint8_t edit_frame[CENSUS_EDIT_MAXBYTES];
+    uint8_t edit_orig[CENSUS_EDIT_MAXBYTES]; /* pre-edit snapshot for the before/after diff (§6) */
     size_t edit_nbits;
     int32_t edit_unit_us; /* slice unit = shortest dominant symbol (sc_feature) */
     uint32_t edit_freq;

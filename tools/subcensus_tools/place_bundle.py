@@ -85,6 +85,113 @@ def _coarse_cadence(epochs: list[int]) -> dict:
     }
 
 
+def _cluster_widths(timings: list[int], rel_tol: float = 0.25, max_clusters: int = 3) -> list[dict]:
+    """Greedy pulse-width clustering (mirrors shared/core sc_pulse / pi dsp.pulse by behaviour),
+    so the §7 `sym_dur_us[1..3]` reported here track the canonical k-NN feature (System §7).
+    Returns up to `max_clusters` slots {center, count}, most-populous first."""
+    slots: list[dict] = []  # {sum, count, center}
+    for t in timings:
+        w = abs(t)
+        if w == 0:
+            continue
+        best, best_d = -1, 0
+        for i, s in enumerate(slots):
+            tol = max(int(rel_tol * s["center"]), 20)
+            d = abs(w - s["center"])
+            if d <= tol and (best < 0 or d < best_d):
+                best, best_d = i, d
+        if best < 0:
+            if len(slots) < 8:
+                slots.append({"sum": float(w), "count": 1, "center": w})
+                continue
+            nd = 0  # no free slot: assign to nearest existing
+            for i, s in enumerate(slots):
+                d = abs(w - s["center"])
+                if best < 0 or d < nd:
+                    best, nd = i, d
+        slots[best]["sum"] += w
+        slots[best]["count"] += 1
+        slots[best]["center"] = int(slots[best]["sum"] / slots[best]["count"])
+    slots.sort(key=lambda s: s["count"], reverse=True)
+    return slots[:max_clusters]
+
+
+def _modulation_from_preset(preset: str, fsk_suspected: bool) -> str:
+    """Map a Flipper capture preset -> §7 modulation string (OOK / 2-FSK / TPMS-preset)."""
+    p = (preset or "").upper()
+    if "TPMS" in p:
+        return "TPMS-preset"
+    if "2FSK" in p or "FSK" in p or fsk_suspected:
+        return "2-FSK"
+    return "OOK"
+
+
+def _feature_vector_from_subs(place_dir: Path, sub_files: list[str], freq_bin: int,
+                              fsk_suspected: bool) -> dict | None:
+    """Approximate §7 waveform feature vector for an unknown, extracted from its .sub capture(s)
+    (System §8: "full feature vectors for unknowns").
+
+    Parses the RAW timings (fieldmap.parse_sub), clusters dominant symbol widths, and emits the
+    §7 waveform fields: freq_bin, modulation, sym_dur_us[1..3], n_symbols, est_bitrate,
+    preamble_len, repeat_count. Computed from the representative capture (the one with the most
+    pulses). NOT byte-identical to the C k-NN core (the bundle is for LLM reasoning, not k-NN) —
+    just faithful to the §7 schema. Returns None when no capture has usable pulses."""
+    best: tuple[int, list[int], int, str] | None = None
+    n_captures = 0
+    for sf in sub_files:
+        p = place_dir / sf
+        if not p.exists():
+            continue
+        timings, freq, preset = fieldmap.parse_sub(p.read_text(errors="ignore"))
+        if not timings:
+            continue
+        n_captures += 1
+        nsym = sum(1 for t in timings if t)
+        if best is None or nsym > best[0]:
+            best = (nsym, timings, freq, preset)
+    if best is None:
+        return None
+    n_symbols, timings, freq, preset = best
+
+    clusters = _cluster_widths(timings)
+    mode_sym = clusters[0]["center"] if clusters else 0
+    sym_dur = sorted(c["center"] for c in clusters)
+    est_bitrate = int(1_000_000.0 / sym_dur[0] + 0.5) if sym_dur and sym_dur[0] > 0 else 0
+
+    # preamble: leading run of consecutive pulses within tol of the first (mirror sc_feature)
+    start = 0
+    while start < len(timings) and abs(timings[start]) == 0:
+        start += 1
+    preamble_len = 0
+    if start < len(timings):
+        ref = abs(timings[start])
+        tol = max(int(0.25 * ref), 20)
+        for i in range(start, len(timings)):
+            w = abs(timings[i])
+            if w == 0:
+                continue
+            if abs(w - ref) <= tol:
+                preamble_len += 1
+            else:
+                break
+
+    # repeat_count: interior long gaps (silence between frames) + 1
+    gap_threshold = mode_sym * 5 or 1
+    interior = sum(1 for i in range(len(timings) - 1)
+                   if timings[i] < 0 and abs(timings[i]) > gap_threshold)
+
+    return {
+        "freq_bin": _freq_bin(freq) if freq else freq_bin,
+        "modulation": _modulation_from_preset(preset, fsk_suspected),
+        "sym_dur_us": sym_dur,
+        "n_symbols": n_symbols,
+        "est_bitrate": est_bitrate,
+        "preamble_len": preamble_len,
+        "repeat_count": interior + 1,
+        "n_captures": n_captures,
+    }
+
+
 def _field_discovery_from_subs(place_dir: Path, sub_files: list[str]) -> dict | None:
     """Deterministic §7b evidence for an unknown: align its .sub capture corpus and emit the
     differential segment classes + trailing-checksum guess (reuses fieldmap discover logic).
@@ -197,6 +304,10 @@ def build_bundle(place_dir: str | Path, place_name: str | None = None,
             needs_id.append(entry)
             if entry["fsk_suspected"]:
                 unk = {"freq_bin": fb, "fsk_suspected": True, "count": len(rows)}
+                # full §7 feature vector for the unknown (System §8) — approximate, from its .sub(s)
+                fv = _feature_vector_from_subs(d, subs, fb, True)
+                if fv is not None:
+                    unk["feature_vector"] = fv
                 # ground the field_maps proposal in the §7b differential + checksum guess (System §8)
                 fd = _field_discovery_from_subs(d, subs)
                 if fd is not None:

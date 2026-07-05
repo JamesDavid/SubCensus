@@ -28,6 +28,13 @@ void census_camp_view_set_jump_callback(
     CensusCampViewJumpCallback cb,
     void* ctx);
 
+/* Called on long-press OK to pause/resume monitoring (§6, optional). `paused` is the new state. */
+typedef void (*CensusCampViewPauseCallback)(void* context, bool paused);
+void census_camp_view_set_pause_callback(
+    CensusCampView* v,
+    CensusCampViewPauseCallback cb,
+    void* ctx);
+
 /* Show/hide an "SD LOW" banner (§6.1 SD full: captures stop, blip rows continue). */
 void census_camp_view_set_low(CensusCampView* v, bool low);
 

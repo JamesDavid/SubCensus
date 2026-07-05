@@ -9,18 +9,30 @@ void subcensus_scene_place_text_on_enter(void* context) {
     SubCensusApp* app = context;
     TextInput* ti = app->text_input;
     text_input_reset(ti);
-    bool rename = app->text_mode == SubCensusTextModeRenamePlace;
-    text_input_set_header_text(ti, rename ? "Rename place" : "New place name");
+    const char* header =
+        (app->text_mode == SubCensusTextModeRenamePlace) ? "Rename place" :
+        (app->text_mode == SubCensusTextModeSetLocation) ? "Location (e.g. Home)" :
+                                                           "New place name";
+    /* clear = keep the existing text (rename/location); new place starts empty */
+    bool clear = app->text_mode == SubCensusTextModeNewPlace;
+    text_input_set_header_text(ti, header);
     text_input_set_result_callback(
-        ti, place_text_done, app, app->text_buf, CENSUS_PLACE_NAME_LEN, !rename);
-    text_input_set_minimum_length(ti, 1);
+        ti, place_text_done, app, app->text_buf, CENSUS_PLACE_NAME_LEN, clear);
+    /* a location may be blank (clearing the tag); name/rename require >=1 char */
+    text_input_set_minimum_length(ti, app->text_mode == SubCensusTextModeSetLocation ? 0 : 1);
     view_dispatcher_switch_to_view(app->view_dispatcher, SubCensusViewTextInput);
 }
 
 bool subcensus_scene_place_text_on_event(void* context, SceneManagerEvent event) {
     SubCensusApp* app = context;
     if(event.type == SceneManagerEventTypeCustom) {
-        if(app->text_mode == SubCensusTextModeRenamePlace) {
+        if(app->text_mode == SubCensusTextModeSetLocation) {
+            census_place_set_location(app->storage, app->selected_place, app->text_buf);
+            FURI_LOG_I(
+                "SubCensus", "SC scene=places action=set_location id=%s", app->selected_place);
+            scene_manager_search_and_switch_to_previous_scene(
+                app->scene_manager, SubCensusScenePlaces);
+        } else if(app->text_mode == SubCensusTextModeRenamePlace) {
             census_place_rename(app->storage, app->selected_place, app->text_buf);
             FURI_LOG_I("SubCensus", "SC scene=places action=rename id=%s", app->selected_place);
             scene_manager_search_and_switch_to_previous_scene(

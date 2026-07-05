@@ -37,6 +37,7 @@ void subcensus_scene_edit_on_enter(void* context) {
             &app->edit_freq,
             app->edit_preset,
             sizeof(app->edit_preset));
+        memcpy(app->edit_orig, app->edit_frame, CENSUS_EDIT_MAXBYTES); /* diff baseline (§6) */
         app->edit_dirty = false;
         app->edit_from_tx = false;
         /* protocol from the top brain candidate (structured editor needs a known protocol) */

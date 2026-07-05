@@ -18,6 +18,12 @@ static void sweep_jump_cb(void* context, uint32_t freq_hz) {
     scene_manager_next_scene(app->scene_manager, SubCensusSceneReview);
 }
 
+/* Long-press OK pauses/resumes monitoring in place (§6). */
+static void sweep_pause_cb(void* context, bool paused) {
+    SubCensusApp* app = context;
+    census_worker_set_paused(app->worker, paused);
+}
+
 static uint32_t g_sweep_last_hits;
 
 static void sweep_timer_cb(void* context) {
@@ -71,6 +77,7 @@ static void sweep_begin(SubCensusApp* app) {
     }
 
     census_camp_view_set_jump_callback(app->camp_view, sweep_jump_cb, app);
+    census_camp_view_set_pause_callback(app->camp_view, sweep_pause_cb, app);
     census_worker_configure(app->worker, &app->settings, app->settings.place_id);
     census_worker_set_callback(app->worker, sweep_worker_cb, app);
     census_worker_start_sweep(app->worker, freqs, thr, n, app->settings.dwell_ms);

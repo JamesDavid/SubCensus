@@ -94,6 +94,10 @@ bool census_place_name(Storage* storage, const char* place_id, char* out, size_t
 /* Rename a place's display name in place.meta (id stays fixed — rename-safe, Zero §4). */
 bool census_place_rename(Storage* storage, const char* place_id, const char* new_name);
 
+/* Read/write the place's optional location tag (manual text, §5.6). */
+void census_place_location(Storage* storage, const char* place_id, char* out, size_t cap);
+bool census_place_set_location(Storage* storage, const char* place_id, const char* location);
+
 /* Delete a place folder (recursive). NEVER touches signatures/. Refuses the active place
  * unless it is not the last one. Returns false on error. */
 bool census_place_delete(Storage* storage, const char* place_id);

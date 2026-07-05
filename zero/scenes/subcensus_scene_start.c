@@ -9,6 +9,7 @@ typedef enum {
     StartItemSweep,
     StartItemCamp,
     StartItemReview,
+    StartItemCompare,
     StartItemSettings,
     StartItemAbout,
 } StartItem;
@@ -34,6 +35,7 @@ void subcensus_scene_start_on_enter(void* context) {
     submenu_add_item(menu, "Start Sweep", StartItemSweep, start_cb, app);
     submenu_add_item(menu, "Start Camp", StartItemCamp, start_cb, app);
     submenu_add_item(menu, "Review captures", StartItemReview, start_cb, app);
+    submenu_add_item(menu, "Compare places", StartItemCompare, start_cb, app);
     submenu_add_item(menu, "Settings", StartItemSettings, start_cb, app);
     submenu_add_item(menu, "About", StartItemAbout, start_cb, app);
 
@@ -77,6 +79,9 @@ bool subcensus_scene_start_on_event(void* context, SceneManagerEvent event) {
             return true;
         case StartItemReview:
             scene_manager_next_scene(app->scene_manager, SubCensusSceneReview);
+            return true;
+        case StartItemCompare:
+            scene_manager_next_scene(app->scene_manager, SubCensusSceneCompare);
             return true;
         default:
             break;

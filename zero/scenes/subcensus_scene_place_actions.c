@@ -3,6 +3,7 @@
 typedef enum {
     PlaceActionSetActive,
     PlaceActionRename,
+    PlaceActionSetLocation,
     PlaceActionDelete,
 } PlaceAction;
 
@@ -21,6 +22,7 @@ void subcensus_scene_place_actions_on_enter(void* context) {
     submenu_set_header(menu, name);
     submenu_add_item(menu, "Set active", PlaceActionSetActive, pa_cb, app);
     submenu_add_item(menu, "Rename", PlaceActionRename, pa_cb, app);
+    submenu_add_item(menu, "Set location", PlaceActionSetLocation, pa_cb, app);
     submenu_add_item(menu, "Delete", PlaceActionDelete, pa_cb, app);
     view_dispatcher_switch_to_view(app->view_dispatcher, SubCensusViewSubmenu);
 }
@@ -41,6 +43,12 @@ bool subcensus_scene_place_actions_on_event(void* context, SceneManagerEvent eve
         case PlaceActionRename:
             app->text_mode = SubCensusTextModeRenamePlace;
             census_place_name(
+                app->storage, app->selected_place, app->text_buf, CENSUS_PLACE_NAME_LEN);
+            scene_manager_next_scene(app->scene_manager, SubCensusScenePlaceText);
+            return true;
+        case PlaceActionSetLocation:
+            app->text_mode = SubCensusTextModeSetLocation;
+            census_place_location(
                 app->storage, app->selected_place, app->text_buf, CENSUS_PLACE_NAME_LEN);
             scene_manager_next_scene(app->scene_manager, SubCensusScenePlaceText);
             return true;

@@ -14,6 +14,32 @@
 
 /* Decode-back gate (§6): an edited frame must re-encode to timings and re-slice back to the
  * same bits before TX is allowed — proof the edit is structurally sound. */
+/* Before/after field diff (§6): what the edit changed vs the pre-edit snapshot. For a known
+ * field-map, list the changed field names; otherwise count changed bytes. */
+static void edit_diff(const SubCensusApp* app, char* out, size_t cap) {
+    size_t nbytes = (app->edit_nbits + 7) / 8;
+    if(app->edit_has_map && app->edit_map.n_fields) {
+        size_t off = 0;
+        int changed = 0;
+        for(size_t i = 0; i < app->edit_map.n_fields; i++) {
+            const ScField* f = &app->edit_map.fields[i];
+            uint32_t a = sc_field_get(app->edit_orig, nbytes, f->start_bit, f->length);
+            uint32_t b = sc_field_get(app->edit_frame, nbytes, f->start_bit, f->length);
+            if(a != b) {
+                changed++;
+                off += (size_t)snprintf(
+                    out + off, off < cap ? cap - off : 0, "%s%s", off ? " " : "", f->name);
+            }
+        }
+        if(changed == 0) snprintf(out, cap, "no change");
+    } else {
+        int bc = 0;
+        for(size_t i = 0; i < nbytes; i++)
+            if(app->edit_orig[i] != app->edit_frame[i]) bc++;
+        snprintf(out, cap, "%d byte%s", bc, bc == 1 ? "" : "s");
+    }
+}
+
 static bool edit_decodes_back(const SubCensusApp* app) {
     int32_t timings[2048];
     size_t nt =
@@ -55,12 +81,14 @@ void subcensus_scene_replay_confirm_on_enter(void* context) {
         snprintf(
             text, sizeof(text), "Edited frame does not\nre-decode cleanly.\nTX blocked (%s).", mhz);
     } else if(edited) {
+        char diff[56];
+        edit_diff(app, diff, sizeof(diff));
         snprintf(
             text,
             sizeof(text),
-            "Send EDITED %s MHz\n%s x1 frame to your\nown device? (logged sep.)",
+            "Send EDITED %s MHz x1\nchanged: %s\nto your own device?",
             mhz,
-            mod);
+            diff);
     } else {
         /* confirm shows freq · preset · repeat count (§6) */
         snprintf(

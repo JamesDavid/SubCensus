@@ -17,6 +17,7 @@ typedef struct {
     bool sd_low; /* SD full banner (§6.1) */
     uint32_t elapsed_s; /* elapsed monitor time (§6) */
     bool rec; /* "REC" overlay just after a capture (§6) */
+    bool paused; /* paused via long-press OK (§6) */
     uint8_t pos, count; /* sweep position in the list (§6 cursor); count 0 = camp */
 } CensusCampModel;
 
@@ -26,6 +27,8 @@ struct CensusCampView {
     void* back_ctx;
     CensusCampViewJumpCallback jump_cb;
     void* jump_ctx;
+    CensusCampViewPauseCallback pause_cb;
+    void* pause_ctx;
 };
 
 static void census_freq_mhz(uint32_t hz, char* buf, size_t cap) {
@@ -85,8 +88,10 @@ static void census_camp_draw(Canvas* canvas, void* model) {
     canvas_set_font(canvas, FontSecondary);
     canvas_draw_str(canvas, 44, 11, freq_line);
 
-    /* "● REC" overlay during a capture window (§6) */
-    if(m->rec) {
+    /* "● REC" overlay during a capture window; "PAUSE" when held (§6) */
+    if(m->paused) {
+        canvas_draw_str(canvas, 98, 11, "PAUSE");
+    } else if(m->rec) {
         canvas_draw_disc(canvas, 122, 8, 3);
         canvas_draw_str(canvas, 104, 11, "REC");
     }
@@ -117,10 +122,25 @@ static void census_camp_draw(Canvas* canvas, void* model) {
 
 static bool census_camp_input(InputEvent* event, void* context) {
     CensusCampView* v = context;
-    if(event->type != InputTypeShort) return false;
 
     bool in_list = false;
     with_view_model(v->view, CensusCampModel * m, { in_list = m->show_list; }, false);
+
+    /* long-press OK toggles pause/resume in the live view (§6, optional) */
+    if(event->type == InputTypeLong && event->key == InputKeyOk && !in_list) {
+        bool paused = false;
+        with_view_model(
+            v->view,
+            CensusCampModel * m,
+            {
+                m->paused = !m->paused;
+                paused = m->paused;
+            },
+            true);
+        if(v->pause_cb) v->pause_cb(v->pause_ctx, paused);
+        return true;
+    }
+    if(event->type != InputTypeShort) return false;
 
     if(!in_list) {
         if(event->key == InputKeyOk) {
@@ -184,6 +204,8 @@ CensusCampView* census_camp_view_alloc(void) {
     v->back_ctx = NULL;
     v->jump_cb = NULL;
     v->jump_ctx = NULL;
+    v->pause_cb = NULL;
+    v->pause_ctx = NULL;
     view_allocate_model(v->view, ViewModelTypeLocking, sizeof(CensusCampModel));
     view_set_context(v->view, v);
     view_set_draw_callback(v->view, census_camp_draw);
@@ -214,6 +236,14 @@ void census_camp_view_set_jump_callback(
     void* ctx) {
     v->jump_cb = cb;
     v->jump_ctx = ctx;
+}
+
+void census_camp_view_set_pause_callback(
+    CensusCampView* v,
+    CensusCampViewPauseCallback cb,
+    void* ctx) {
+    v->pause_cb = cb;
+    v->pause_ctx = ctx;
 }
 
 void census_camp_view_set_low(CensusCampView* v, bool low) {

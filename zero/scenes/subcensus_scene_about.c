@@ -13,6 +13,13 @@ void subcensus_scene_about_on_enter(void* context) {
 
     char place_name[CENSUS_PLACE_NAME_LEN];
     census_place_name(app->storage, app->settings.place_id, place_name, sizeof(place_name));
+    char place_loc[CENSUS_PLACE_NAME_LEN];
+    census_place_location(app->storage, app->settings.place_id, place_loc, sizeof(place_loc));
+    static char place_line[80];
+    if(place_loc[0])
+        snprintf(place_line, sizeof(place_line), "Place: %s @ %s", place_name, place_loc);
+    else
+        snprintf(place_line, sizeof(place_line), "Place: %s", place_name);
 
     /* storage tier + free space (§6.1 surfaces remaining space here) */
     char storage_line[48];
@@ -46,7 +53,7 @@ void subcensus_scene_about_on_enter(void* context) {
         "TX-allow-list gated.\n"
         "\n"
         "%s\n"
-        "Place: %s\n"
+        "%s\n"
         "\n"
         "Sweep: revisit ~ N x dwell;\n"
         "longer lists/dwell miss one-\n"
@@ -63,7 +70,7 @@ void subcensus_scene_about_on_enter(void* context) {
         "Freq/Spectrum Analyzer, FlipRSDR.",
         fw_ver,
         storage_line,
-        place_name);
+        place_line);
 
     widget_add_text_scroll_element(w, 0, 0, 128, 64, text);
     view_dispatcher_switch_to_view(app->view_dispatcher, SubCensusViewWidget);

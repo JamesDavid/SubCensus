@@ -175,7 +175,11 @@ static bool census_write_csv_header(Storage* storage, const char* path, const ch
     return ok;
 }
 
-static bool census_place_write_meta(Storage* storage, const char* place_id, const char* name) {
+static bool census_place_write_meta(
+    Storage* storage,
+    const char* place_id,
+    const char* name,
+    const char* location) {
     char path[128];
     census_place_file(place_id, "place.meta", path, sizeof(path));
     FlipperFormat* ff = flipper_format_file_alloc(storage);
@@ -185,6 +189,8 @@ static bool census_place_write_meta(Storage* storage, const char* place_id, cons
     uint32_t created = furi_hal_rtc_get_timestamp();
     if(ok) ok = flipper_format_write_uint32(ff, "created", &created, 1);
     if(ok) ok = flipper_format_write_string_cstr(ff, "notes", "");
+    /* optional location tag: manual text, or lat/lon if an external GPS is wired (§5.6) */
+    if(ok) ok = flipper_format_write_string_cstr(ff, "location", location ? location : "");
     flipper_format_free(ff);
     return ok;
 }
@@ -206,7 +212,7 @@ bool census_place_create(Storage* storage, const char* name, char* out_id, size_
     census_place_file(id, "captures", captures, sizeof(captures));
     storage_common_mkdir(storage, captures);
 
-    bool ok = census_place_write_meta(storage, id, name);
+    bool ok = census_place_write_meta(storage, id, name, "");
     char path[160];
     census_place_file(id, "occupancy.csv", path, sizeof(path));
     ok = census_write_csv_header(storage, path, OCCUPANCY_HEADER) && ok;
@@ -265,8 +271,38 @@ bool census_place_name(Storage* storage, const char* place_id, char* out, size_t
     return ok;
 }
 
-bool census_place_rename(Storage* storage, const char* place_id, const char* new_name) {
-    /* preserve created timestamp; only the display name changes (id is rename-safe) */
+/* Read a string field from place.meta (name / location); falls back to `fallback`. */
+static void census_place_meta_str(
+    Storage* storage,
+    const char* place_id,
+    const char* key,
+    char* out,
+    size_t cap,
+    const char* fallback) {
+    char path[128];
+    census_place_file(place_id, "place.meta", path, sizeof(path));
+    strncpy(out, fallback, cap - 1);
+    out[cap - 1] = '\0';
+    FlipperFormat* ff = flipper_format_file_alloc(storage);
+    if(flipper_format_file_open_existing(ff, path)) {
+        FuriString* tmp = furi_string_alloc();
+        uint32_t version = 0;
+        if(flipper_format_read_header(ff, tmp, &version) &&
+           flipper_format_read_string(ff, key, tmp)) {
+            strncpy(out, furi_string_get_cstr(tmp), cap - 1);
+            out[cap - 1] = '\0';
+        }
+        furi_string_free(tmp);
+    }
+    flipper_format_free(ff);
+}
+
+/* Rewrite place.meta preserving created, with a new name and/or location (id is rename-safe). */
+static bool census_place_rewrite_meta(
+    Storage* storage,
+    const char* place_id,
+    const char* name,
+    const char* location) {
     char path[128];
     census_place_file(place_id, "place.meta", path, sizeof(path));
     uint32_t created = furi_hal_rtc_get_timestamp();
@@ -283,11 +319,28 @@ bool census_place_rename(Storage* storage, const char* place_id, const char* new
     ff = flipper_format_file_alloc(storage);
     bool ok = flipper_format_file_open_always(ff, path);
     if(ok) ok = flipper_format_write_header_cstr(ff, PLACE_META_HEADER, 1);
-    if(ok) ok = flipper_format_write_string_cstr(ff, "name", new_name);
+    if(ok) ok = flipper_format_write_string_cstr(ff, "name", name);
     if(ok) ok = flipper_format_write_uint32(ff, "created", &created, 1);
     if(ok) ok = flipper_format_write_string_cstr(ff, "notes", "");
+    if(ok) ok = flipper_format_write_string_cstr(ff, "location", location);
     flipper_format_free(ff);
     return ok;
+}
+
+bool census_place_rename(Storage* storage, const char* place_id, const char* new_name) {
+    char loc[CENSUS_PLACE_NAME_LEN];
+    census_place_meta_str(storage, place_id, "location", loc, sizeof(loc), "");
+    return census_place_rewrite_meta(storage, place_id, new_name, loc);
+}
+
+void census_place_location(Storage* storage, const char* place_id, char* out, size_t cap) {
+    census_place_meta_str(storage, place_id, "location", out, cap, "");
+}
+
+bool census_place_set_location(Storage* storage, const char* place_id, const char* location) {
+    char name[CENSUS_PLACE_NAME_LEN];
+    census_place_meta_str(storage, place_id, "name", name, sizeof(name), place_id);
+    return census_place_rewrite_meta(storage, place_id, name, location);
 }
 
 bool census_place_delete(Storage* storage, const char* place_id) {
