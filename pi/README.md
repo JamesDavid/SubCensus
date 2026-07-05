@@ -9,6 +9,19 @@ MQTT → Home Assistant discovery. **RX-only.** Spec:
 
 ## Install
 
+**Quick install (Raspberry Pi OS / Debian / Ubuntu)** — installs rtl_433 + RTL-SDR, clones the
+repo, sets up a venv, and seeds `config.yaml`:
+
+```
+curl -sSL https://raw.githubusercontent.com/JamesDavid/SubCensus/master/pi/install.sh | bash
+```
+
+Prefer to read it first (recommended for any `curl | bash`): `curl -sSL <same-url> -o install.sh`,
+inspect [`pi/install.sh`](./install.sh), then `bash install.sh`. Override the target dir with
+`SUBCENSUS_DIR=/opt/subcensus`.
+
+**Manual install** (already have the repo):
+
 ```
 cd pi
 pip install -e .[dev]        # fastapi, uvicorn, jinja2, python-multipart, paho-mqtt, pyyaml (+ pytest, httpx)
