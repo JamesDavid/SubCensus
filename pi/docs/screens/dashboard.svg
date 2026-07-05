@@ -1,0 +1,131 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="940" height="600" viewBox="0 0 940 600">
+<rect width="940" height="600" fill="#0d1117"/>
+<text x="20" y="30" font-size="20" fill="#e6edf3" font-weight="700" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">SubCensusPi</text>
+<text x="150" y="30" font-size="13" fill="#8b949e" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">place: all</text>
+<text x="20" y="50" font-size="12" fill="#8b949e" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Wideband RTL-SDR ISM census — RX only. 4 devices.</text>
+<rect x="20" y="66" width="590" height="320" rx="6" fill="#161b22" stroke="#30363d"/>
+<text x="34" y="90" font-size="15" fill="#4493f8" font-weight="600" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Devices</text>
+<text x="34" y="112" font-size="11" fill="#8b949e" font-weight="600" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Model</text>
+<text x="120" y="112" font-size="11" fill="#8b949e" font-weight="600" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">ID/Ch</text>
+<text x="175" y="112" font-size="11" fill="#8b949e" font-weight="600" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Band</text>
+<text x="235" y="112" font-size="11" fill="#8b949e" font-weight="600" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Count</text>
+<text x="275" y="112" font-size="11" fill="#8b949e" font-weight="600" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Last seen</text>
+<text x="360" y="112" font-size="11" fill="#8b949e" font-weight="600" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Activity</text>
+<text x="470" y="112" font-size="11" fill="#8b949e" font-weight="600" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">SNR</text>
+<text x="505" y="112" font-size="11" fill="#8b949e" font-weight="600" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Label / Room / Class</text>
+<text x="34" y="140" font-size="12" fill="#e6edf3" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Acurite-Tower</text>
+<text x="120" y="140" font-size="12" fill="#e6edf3" font-weight="400" text-anchor="start" font-family="ui-monospace,Consolas,monospace">1234/A</text>
+<text x="175" y="140" font-size="12" fill="#e6edf3" font-weight="400" text-anchor="start" font-family="ui-monospace,Consolas,monospace">433.92</text>
+<text x="238" y="140" font-size="12" fill="#e6edf3" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">4</text>
+<text x="275" y="140" font-size="11" fill="#8b949e" font-weight="400" text-anchor="start" font-family="ui-monospace,Consolas,monospace">12:03:00</text>
+<rect x="360" y="136" width="4" height="8" fill="#3fb950" rx="1"/>
+<rect x="366" y="133" width="4" height="11" fill="#3fb950" rx="1"/>
+<rect x="372" y="135" width="4" height="9" fill="#3fb950" rx="1"/>
+<rect x="378" y="130" width="4" height="14" fill="#3fb950" rx="1"/>
+<text x="470" y="140" font-size="12" fill="#3fb950" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">12.0</text>
+<rect x="505" y="128" width="90" height="18" rx="4" fill="#0d1117" stroke="#30363d"/>
+<text x="511" y="141" font-size="11" fill="#8b949e" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">label</text>
+<rect x="505" y="148" width="90" height="18" rx="4" fill="#0d1117" stroke="#30363d"/>
+<text x="511" y="161" font-size="11" fill="#8b949e" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">room</text>
+<rect x="505" y="168" width="60" height="18" rx="4" fill="#0d1117" stroke="#30363d"/>
+<text x="511" y="181" font-size="11" fill="#8b949e" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">class ▾</text>
+<rect x="575" y="167" width="30" height="22" rx="6" fill="#21262d" stroke="#30363d"/>
+<text x="590.0" y="182" font-size="12" fill="#c9d1d9" font-weight="400" text-anchor="middle" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">save</text>
+<text x="34" y="198" font-size="12" fill="#e6edf3" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Generic-Remote</text>
+<text x="120" y="198" font-size="12" fill="#e6edf3" font-weight="400" text-anchor="start" font-family="ui-monospace,Consolas,monospace">42</text>
+<text x="175" y="198" font-size="12" fill="#e6edf3" font-weight="400" text-anchor="start" font-family="ui-monospace,Consolas,monospace">433.92</text>
+<text x="238" y="198" font-size="12" fill="#e6edf3" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">1</text>
+<text x="275" y="198" font-size="11" fill="#8b949e" font-weight="400" text-anchor="start" font-family="ui-monospace,Consolas,monospace">12:00:20</text>
+<rect x="360" y="188" width="4" height="14" fill="#3fb950" rx="1"/>
+<text x="470" y="198" font-size="12" fill="#3fb950" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">15.0</text>
+<rect x="505" y="186" width="90" height="18" rx="4" fill="#0d1117" stroke="#30363d"/>
+<text x="511" y="199" font-size="11" fill="#8b949e" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">label</text>
+<rect x="505" y="206" width="90" height="18" rx="4" fill="#0d1117" stroke="#30363d"/>
+<text x="511" y="219" font-size="11" fill="#8b949e" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">room</text>
+<rect x="505" y="226" width="60" height="18" rx="4" fill="#0d1117" stroke="#30363d"/>
+<text x="511" y="239" font-size="11" fill="#8b949e" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">class ▾</text>
+<rect x="575" y="225" width="30" height="22" rx="6" fill="#21262d" stroke="#30363d"/>
+<text x="590.0" y="240" font-size="12" fill="#c9d1d9" font-weight="400" text-anchor="middle" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">save</text>
+<text x="34" y="256" font-size="12" fill="#e6edf3" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Schrader</text>
+<text x="120" y="256" font-size="12" fill="#e6edf3" font-weight="400" text-anchor="start" font-family="ui-monospace,Consolas,monospace">9ABCDE</text>
+<text x="175" y="256" font-size="12" fill="#e6edf3" font-weight="400" text-anchor="start" font-family="ui-monospace,Consolas,monospace">315.00</text>
+<text x="238" y="256" font-size="12" fill="#e6edf3" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">1</text>
+<text x="275" y="256" font-size="11" fill="#8b949e" font-weight="400" text-anchor="start" font-family="ui-monospace,Consolas,monospace">12:00:10</text>
+<rect x="360" y="251" width="4" height="9" fill="#3fb950" rx="1"/>
+<text x="470" y="256" font-size="12" fill="#3fb950" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">10.0</text>
+<rect x="505" y="244" width="90" height="18" rx="4" fill="#0d1117" stroke="#30363d"/>
+<text x="511" y="257" font-size="11" fill="#8b949e" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">label</text>
+<rect x="505" y="264" width="90" height="18" rx="4" fill="#0d1117" stroke="#30363d"/>
+<text x="511" y="277" font-size="11" fill="#8b949e" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">room</text>
+<rect x="505" y="284" width="60" height="18" rx="4" fill="#0d1117" stroke="#30363d"/>
+<text x="511" y="297" font-size="11" fill="#8b949e" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">class ▾</text>
+<rect x="575" y="283" width="30" height="22" rx="6" fill="#21262d" stroke="#30363d"/>
+<text x="590.0" y="298" font-size="12" fill="#c9d1d9" font-weight="400" text-anchor="middle" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">save</text>
+<text x="34" y="314" font-size="12" fill="#e6edf3" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Prologue-TH</text>
+<text x="120" y="314" font-size="12" fill="#e6edf3" font-weight="400" text-anchor="start" font-family="ui-monospace,Consolas,monospace">55/1</text>
+<text x="175" y="314" font-size="12" fill="#e6edf3" font-weight="400" text-anchor="start" font-family="ui-monospace,Consolas,monospace">433.92</text>
+<text x="238" y="314" font-size="12" fill="#e6edf3" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">1</text>
+<text x="275" y="314" font-size="11" fill="#8b949e" font-weight="400" text-anchor="start" font-family="ui-monospace,Consolas,monospace">12:00:05</text>
+<rect x="360" y="310" width="4" height="8" fill="#3fb950" rx="1"/>
+<text x="470" y="314" font-size="12" fill="#3fb950" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">8.0</text>
+<rect x="505" y="302" width="90" height="18" rx="4" fill="#0d1117" stroke="#30363d"/>
+<text x="511" y="315" font-size="11" fill="#8b949e" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">label</text>
+<rect x="505" y="322" width="90" height="18" rx="4" fill="#0d1117" stroke="#30363d"/>
+<text x="511" y="335" font-size="11" fill="#8b949e" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">room</text>
+<rect x="505" y="342" width="60" height="18" rx="4" fill="#0d1117" stroke="#30363d"/>
+<text x="511" y="355" font-size="11" fill="#8b949e" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">class ▾</text>
+<rect x="575" y="341" width="30" height="22" rx="6" fill="#21262d" stroke="#30363d"/>
+<text x="590.0" y="356" font-size="12" fill="#c9d1d9" font-weight="400" text-anchor="middle" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">save</text>
+<rect x="630" y="66" width="290" height="320" rx="6" fill="#161b22" stroke="#30363d"/>
+<text x="644" y="90" font-size="15" fill="#4493f8" font-weight="600" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Live feed</text>
+<text x="644" y="116" font-size="11" fill="#8b949e" font-weight="400" text-anchor="start" font-family="ui-monospace,Consolas,monospace">12:03:00</text>
+<text x="700" y="116" font-size="11" fill="#4493f8" font-weight="400" text-anchor="start" font-family="ui-monospace,Consolas,monospace">433.92</text>
+<text x="742" y="116" font-size="11" fill="#e6edf3" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Acurite-Tower · 12 dB</text>
+<text x="644" y="142" font-size="11" fill="#8b949e" font-weight="400" text-anchor="start" font-family="ui-monospace,Consolas,monospace">12:02:00</text>
+<text x="700" y="142" font-size="11" fill="#4493f8" font-weight="400" text-anchor="start" font-family="ui-monospace,Consolas,monospace">433.92</text>
+<text x="742" y="142" font-size="11" fill="#e6edf3" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Acurite-Tower · 12.5 dB</text>
+<text x="644" y="168" font-size="11" fill="#8b949e" font-weight="400" text-anchor="start" font-family="ui-monospace,Consolas,monospace">12:01:00</text>
+<text x="700" y="168" font-size="11" fill="#4493f8" font-weight="400" text-anchor="start" font-family="ui-monospace,Consolas,monospace">433.92</text>
+<text x="742" y="168" font-size="11" fill="#e6edf3" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Acurite-Tower · 11.5 dB</text>
+<text x="644" y="194" font-size="11" fill="#8b949e" font-weight="400" text-anchor="start" font-family="ui-monospace,Consolas,monospace">12:00:20</text>
+<text x="700" y="194" font-size="11" fill="#4493f8" font-weight="400" text-anchor="start" font-family="ui-monospace,Consolas,monospace">433.92</text>
+<text x="742" y="194" font-size="11" fill="#e6edf3" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Generic-Remote · 15 dB</text>
+<text x="644" y="220" font-size="11" fill="#8b949e" font-weight="400" text-anchor="start" font-family="ui-monospace,Consolas,monospace">12:00:10</text>
+<text x="700" y="220" font-size="11" fill="#4493f8" font-weight="400" text-anchor="start" font-family="ui-monospace,Consolas,monospace">315.00</text>
+<text x="742" y="220" font-size="11" fill="#e6edf3" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Schrader · 10 dB</text>
+<text x="644" y="246" font-size="11" fill="#8b949e" font-weight="400" text-anchor="start" font-family="ui-monospace,Consolas,monospace">12:00:05</text>
+<text x="700" y="246" font-size="11" fill="#4493f8" font-weight="400" text-anchor="start" font-family="ui-monospace,Consolas,monospace">433.92</text>
+<text x="742" y="246" font-size="11" fill="#e6edf3" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Prologue-TH · 8 dB</text>
+<text x="644" y="272" font-size="11" fill="#8b949e" font-weight="400" text-anchor="start" font-family="ui-monospace,Consolas,monospace">12:00:00</text>
+<text x="700" y="272" font-size="11" fill="#4493f8" font-weight="400" text-anchor="start" font-family="ui-monospace,Consolas,monospace">433.92</text>
+<text x="742" y="272" font-size="11" fill="#e6edf3" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Acurite-Tower · 12 dB</text>
+<rect x="20" y="400" width="900" height="68" rx="6" fill="#161b22" stroke="#30363d"/>
+<text x="34" y="424" font-size="15" fill="#4493f8" font-weight="600" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Unknowns</text>
+<text x="114" y="424" font-size="11" fill="#8b949e" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">review queue</text>
+<text x="34" y="444" font-size="11" fill="#8b949e" font-weight="600" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Time</text>
+<text x="150" y="444" font-size="11" fill="#8b949e" font-weight="600" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Band</text>
+<text x="300" y="444" font-size="11" fill="#8b949e" font-weight="600" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Pulse summary</text>
+<text x="640" y="444" font-size="11" fill="#8b949e" font-weight="600" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Sample</text>
+<text x="820" y="444" font-size="11" fill="#8b949e" font-weight="600" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Class</text>
+<text x="34" y="462" font-size="12" fill="#8b949e" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">No unknowns captured.</text>
+<rect x="20" y="482" width="900" height="100" rx="6" fill="#161b22" stroke="#30363d"/>
+<text x="34" y="506" font-size="15" fill="#4493f8" font-weight="600" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Bands</text>
+<text x="87" y="506" font-size="11" fill="#8b949e" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">occupancy heatmap &amp; watchlist</text>
+<text x="34" y="524" font-size="12" fill="#8b949e" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Recon:</text>
+<rect x="84" y="514" width="124" height="22" rx="6" fill="#21262d" stroke="#30363d"/>
+<text x="146.0" y="529" font-size="12" fill="#c9d1d9" font-weight="400" text-anchor="middle" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Run (Accumulate)</text>
+<rect x="216" y="514" width="89" height="22" rx="6" fill="#21262d" stroke="#30363d"/>
+<text x="260.5" y="529" font-size="12" fill="#c9d1d9" font-weight="400" text-anchor="middle" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Run (Fresh)</text>
+<rect x="313" y="514" width="131" height="22" rx="6" fill="#21262d" stroke="#f85149"/>
+<text x="378.5" y="529" font-size="12" fill="#f85149" font-weight="400" text-anchor="middle" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Reset (keep pins)</text>
+<rect x="452" y="514" width="131" height="22" rx="6" fill="#21262d" stroke="#f85149"/>
+<text x="517.5" y="529" font-size="12" fill="#f85149" font-weight="400" text-anchor="middle" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Reset (wipe pins)</text>
+<text x="34" y="556" font-size="11" fill="#8b949e" font-weight="600" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Freq</text>
+<text x="150" y="556" font-size="11" fill="#8b949e" font-weight="600" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Occupancy</text>
+<text x="320" y="556" font-size="11" fill="#8b949e" font-weight="600" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Peak</text>
+<text x="430" y="556" font-size="11" fill="#8b949e" font-weight="600" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Noise</text>
+<text x="560" y="556" font-size="11" fill="#8b949e" font-weight="600" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Crossings</text>
+<text x="720" y="556" font-size="11" fill="#8b949e" font-weight="600" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Last seen</text>
+<text x="34" y="574" font-size="12" fill="#8b949e" font-weight="400" text-anchor="start" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">No places_dir configured.</text>
+<text x="930" y="592" font-size="11" fill="#8b949e" text-anchor="end" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">placeholder mock</text>
+</svg>

@@ -48,6 +48,11 @@ web host/port. Two systemd services in production (Pi §9): `collector` + `web`.
 
 ## Using the dashboard — section by section
 
+![SubCensusPi dashboard](docs/screens/dashboard.svg)
+
+> Mockup modelled from the real dashboard running against the fixture stream below — regenerate
+> with `python docs/make_web_mockups.py`; swap for a browser screenshot any time.
+
 Open `http://<host>:8080/`. It's a **single self-hosted page** (no external JS/CDN, works
 offline), auto-refreshing on a poll. The header shows `place: <active>` and a device count.
 Everything is **RX-only** — there is no transmit control anywhere in the UI.
