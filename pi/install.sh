@@ -23,6 +23,8 @@ if command -v apt-get >/dev/null 2>&1; then
         sudo DEBIAN_FRONTEND=noninteractive apt-get -y upgrade
     fi
     sudo apt-get install -y git python3 python3-venv python3-pip rtl-433 rtl-sdr librtlsdr-dev
+    # let this user access the RTL-SDR over USB without root (udev rules ship with rtl-sdr).
+    sudo usermod -aG plugdev "$USER" 2>/dev/null || true
 else
     echo "!! non-apt system: install git, python3-venv, rtl-433 and librtlsdr yourself, then re-run."
     echo "   (RTL-SDR Blog v4 needs a current librtlsdr — build from source if apt's is old.)"
@@ -56,20 +58,56 @@ fi
 # 5. seed a config if there isn't one yet
 [ -f config.yaml ] || cp config.example.yaml config.yaml
 
+# 6. install + start the systemd services so the collector + dashboard auto-run on boot and
+#    restart on crash (this is the default; opt out with SUBCENSUS_NO_SERVICE=1). The collector
+#    tolerates a missing/idle dongle — its per-dongle supervisor just keeps retrying with backoff,
+#    so the service stays up either way (Pi §9).
+install_services() {
+    echo "-- installing + starting systemd services (User=$USER, dir=$DEST/pi)"
+    for unit in subcensuspi-collector subcensuspi-web; do
+        sed -e "s|^User=pi\$|User=$USER|" \
+            -e "s|/home/pi/SubCensus|$DEST|g" \
+            "$DEST/pi/subcensuspi/systemd/$unit.service" |
+            sudo tee "/etc/systemd/system/$unit.service" >/dev/null
+    done
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now subcensuspi-collector subcensuspi-web
+    sleep 1
+    sudo systemctl --no-pager --lines=0 status subcensuspi-collector || true
+}
+if command -v systemctl >/dev/null 2>&1 && [ "${SUBCENSUS_NO_SERVICE:-0}" != "1" ]; then
+    install_services
+    STARTED=1
+else
+    STARTED=0
+fi
+
+IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 cat <<MSG
 
 Done — SubCensusPi is installed at $DEST/pi
-
-Next:
-  cd $DEST/pi && . .venv/bin/activate
-  \$EDITOR config.yaml            # dongle serial(s), place, signatures_dir, MQTT
-  python -m subcensuspi.collector.main --config config.yaml                       # collector (needs a dongle)
-  SUBCENSUSPI_DB=census.db uvicorn subcensuspi.web.app:app --host 0.0.0.0 --port 8080   # dashboard
-
-No dongle yet? Drive the whole decode -> catalog -> dashboard path from a recorded fixture:
-  python -m subcensuspi.collector.main --config config.example.yaml \\
-      --replay ../test/fixtures/rtl433/home_stream.jsonl --db census.db
-
-Run it for real under systemd (collector + web): see pi/README.md and the unit files in
-pi/subcensuspi/systemd/ (subcensuspi-collector.service + subcensuspi-web.service).
 MSG
+if [ "$STARTED" = "1" ]; then
+cat <<MSG
+
+The collector + dashboard are RUNNING as systemd services (auto-start on boot):
+  dashboard   ->  http://${IP:-<pi-ip>}:8080
+  live logs   ->  journalctl -u subcensuspi-collector -f
+  status      ->  systemctl status subcensuspi-collector subcensuspi-web
+  stop/disable->  sudo systemctl disable --now subcensuspi-collector subcensuspi-web
+
+If SDR access needs the new 'plugdev' group membership, reboot (or re-plug the dongle) once:
+  sudo reboot
+
+Edit config.yaml (dongle serial / place / MQTT) then restart:
+  \$EDITOR $DEST/pi/config.yaml && sudo systemctl restart subcensuspi-collector
+MSG
+else
+cat <<MSG
+
+Services were not started (no systemd, or SUBCENSUS_NO_SERVICE=1). Run in the foreground:
+  cd $DEST/pi && . .venv/bin/activate
+  python -m subcensuspi.collector.main --config config.yaml
+  SUBCENSUSPI_DB=$DATA_DIR/census.db uvicorn subcensuspi.web.app:app --host 0.0.0.0 --port 8080
+MSG
+fi
