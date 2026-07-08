@@ -3,9 +3,11 @@
 #
 #   curl -sSL https://raw.githubusercontent.com/JamesDavid/SubCensus/master/pi/install.sh | bash
 #
-# Updates the system, installs the deps (rtl-433 + RTL-SDR), clones the repo, creates a venv,
-# installs the pi package, provisions the data dir, and seeds config.yaml. Override the target
-# dir with SUBCENSUS_DIR=/path. Skip the system upgrade with SUBCENSUS_NO_UPGRADE=1.
+# Installs the deps (rtl-433 + RTL-SDR), clones the repo, creates a venv, installs the pi
+# package, provisions the data dir, seeds config.yaml, and starts the services. Safe to re-run:
+# every step is idempotent (already-installed apt packages are skipped, the repo fast-forwards,
+# the venv/pip/services just refresh). A FULL `apt upgrade` is opt-in (SUBCENSUS_UPGRADE=1) so
+# re-runs are fast. Override the target dir with SUBCENSUS_DIR=/path.
 # RX-only; no radio is touched by the install — a dongle is only needed to receive.
 set -euo pipefail
 
@@ -15,11 +17,12 @@ DATA_DIR="${SUBCENSUS_DATA_DIR:-/var/lib/subcensuspi}"   # matches config.exampl
 
 echo "== SubCensusPi installer =="
 
-# 1. update the system + install packages: rtl_433 + RTL-SDR + python toolchain
+# 1. install packages: rtl_433 + RTL-SDR + python toolchain (idempotent — apt skips what's
+#    already installed). A full system upgrade is OPT-IN so re-running the installer is fast.
 if command -v apt-get >/dev/null 2>&1; then
     sudo apt-get update
-    if [ "${SUBCENSUS_NO_UPGRADE:-0}" != "1" ]; then
-        echo "-- upgrading installed packages (SUBCENSUS_NO_UPGRADE=1 to skip)"
+    if [ "${SUBCENSUS_UPGRADE:-0}" = "1" ]; then
+        echo "-- SUBCENSUS_UPGRADE=1: upgrading all installed packages (slow)"
         sudo DEBIAN_FRONTEND=noninteractive apt-get -y upgrade
     fi
     sudo apt-get install -y git python3 python3-venv python3-pip rtl-433 rtl-sdr librtlsdr-dev
