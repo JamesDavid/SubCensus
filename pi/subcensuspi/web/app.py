@@ -19,13 +19,17 @@ from fastapi.templating import Jinja2Templates
 from pathlib import Path as _Path
 
 from ..db import Database
+import subprocess
+
 from ..occupancy_pass import (
     read_occupancy_csv,
     read_spectrum_csv,
     read_watchlist_rows,
     reset_place,
+    rtl_power_available,
     run_pass_to_place,
     set_pin,
+    sweep_live_to_csv,
 )
 from ..taxonomy import class_ids, is_valid
 
@@ -241,27 +245,45 @@ def create_app(db_path: str, place: str | None = None, places_dir: str | None = 
     def api_run(
         place: str = Form(default=""),
         mode: str = Form(default="accumulate"),
+        duration_s: int = Form(default=20),
         rtl_power_csv: str = Form(default=""),
     ):
-        """Run an occupancy pass (Pi §7 Bands: Accumulate default / Fresh; cumulative per place,
-        System §9). A LIVE rtl_power sweep needs a dongle (TODO(hw)); the processing path is
-        driven from a recorded rtl_power CSV — pass `rtl_power_csv=` to run it off-device."""
+        """Run an occupancy/spectrum pass (Pi §7 Bands: Accumulate default / Fresh; cumulative per
+        place, System §9). By DEFAULT this runs a LIVE `rtl_power` sweep on the dongle — the
+        occupancy heatmap + waterfall come straight off the radio. (`rtl_power_csv=` is a dev-only
+        override to replay a recorded sweep; not needed on real hardware.)"""
         d = place_dir(place or None)
         if d is None:
             raise HTTPException(status_code=400, detail="no places_dir configured")
         if mode not in ("accumulate", "fresh"):
             raise HTTPException(status_code=400, detail="mode must be accumulate|fresh")
-        if not rtl_power_csv:
-            # No recorded sweep given -> a live wideband sweep is required, which needs hardware.
-            raise HTTPException(
-                status_code=501,
-                detail="live rtl_power sweep requires a dongle (TODO(hw)); "
-                       "pass rtl_power_csv=<recorded sweep> to run the pass off-device",
-            )
-        if not _Path(rtl_power_csv).is_file():
+
+        src = rtl_power_csv
+        if not src:  # live sweep on the dongle (the normal path)
+            if not rtl_power_available():
+                raise HTTPException(
+                    status_code=503,
+                    detail="rtl_power not installed — run pi/install.sh (installs rtl-sdr).",
+                )
+            try:
+                sweep_live_to_csv(d / "recon_sweep.csv", duration_s=duration_s)
+            except FileNotFoundError as e:
+                raise HTTPException(status_code=503, detail=str(e))
+            except subprocess.TimeoutExpired:
+                raise HTTPException(status_code=504, detail="rtl_power sweep timed out")
+            except subprocess.CalledProcessError:
+                raise HTTPException(
+                    status_code=503,
+                    detail="rtl_power sweep failed — is the dongle free? If the collector is "
+                    "using it, stop it: sudo systemctl stop subcensuspi-collector. If you see "
+                    "usb_claim_interface -6, the DVB driver holds it — pi/install.sh blacklists it.",
+                )
+            src = str(d / "recon_sweep.csv")
+        elif not _Path(src).is_file():
             raise HTTPException(status_code=400, detail="rtl_power_csv not found")
-        bins = run_pass_to_place(rtl_power_csv, d, fresh=(mode == "fresh"))
-        return JSONResponse({"ok": True, "mode": mode, "bins": len(bins)})
+
+        bins = run_pass_to_place(src, d, fresh=(mode == "fresh"))
+        return JSONResponse({"ok": True, "mode": mode, "bins": len(bins), "live": not rtl_power_csv})
 
     @app.post("/api/recon/reset")
     def api_reset(place: str = Form(default=""), keep_pins: bool = Form(default=True)):

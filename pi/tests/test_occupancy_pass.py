@@ -103,9 +103,10 @@ def test_recon_run_from_recorded_sweep(sweep, tmp_path):
     places_dir = tmp_path / "places"
     client = TestClient(create_app(str(tmp_path / "census.db"), place="home", places_dir=str(places_dir)))
 
-    # a live sweep (no recorded csv) is the hardware boundary -> 501 TODO(hw)
+    # no recorded csv -> a LIVE rtl_power sweep on the dongle (the normal path). With no
+    # rtl_power binary in CI, that surfaces a clear 503 pointing at the installer, not a hang.
     r = client.post("/api/recon/run", data={"place": "home", "mode": "accumulate"})
-    assert r.status_code == 501 and "TODO(hw)" in r.json()["detail"]
+    assert r.status_code == 503 and "rtl_power" in r.json()["detail"]
 
     # fresh run from the recorded sweep writes occupancy/watchlist artifacts
     r = client.post("/api/recon/run", data={"place": "home", "mode": "fresh", "rtl_power_csv": str(sweep)})

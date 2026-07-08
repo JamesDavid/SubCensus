@@ -28,6 +28,12 @@ if command -v apt-get >/dev/null 2>&1; then
     sudo apt-get install -y git python3 python3-venv python3-pip rtl-433 rtl-sdr librtlsdr-dev
     # let this user access the RTL-SDR over USB without root (udev rules ship with rtl-sdr).
     sudo usermod -aG plugdev "$USER" 2>/dev/null || true
+    # THE classic RTL-SDR fix: the kernel DVB-T TV driver grabs the dongle, so rtl_433/rtl_power
+    # get "usb_claim_interface error -6". Blacklist it (persists across reboots) and unload it now
+    # so no reboot is needed.
+    printf 'blacklist %s\n' dvb_usb_rtl28xxu rtl2832 rtl2830 rtl2838 rtl2832_sdr |
+        sudo tee /etc/modprobe.d/blacklist-rtl-sdr.conf >/dev/null
+    sudo modprobe -r dvb_usb_rtl28xxu 2>/dev/null || true
 else
     echo "!! non-apt system: install git, python3-venv, rtl-433 and librtlsdr yourself, then re-run."
     echo "   (RTL-SDR Blog v4 needs a current librtlsdr — build from source if apt's is old.)"
@@ -97,10 +103,15 @@ The collector + dashboard are RUNNING as systemd services (auto-start on boot):
   dashboard   ->  http://${IP:-<pi-ip>}:8080
   live logs   ->  journalctl -u subcensuspi-collector -f
   status      ->  systemctl status subcensuspi-collector subcensuspi-web
-  stop/disable->  sudo systemctl disable --now subcensuspi-collector subcensuspi-web
 
-If SDR access needs the new 'plugdev' group membership, reboot (or re-plug the dongle) once:
-  sudo reboot
+Check the dongle is claimable now (should say "Found 1... Sampling", NO error -6):
+  rtl_test -t
+
+LIVE SPECTRUM: on the dashboard's Bands tab, "Run (Accumulate/Fresh)" now does a REAL rtl_power
+sweep on the dongle and draws the occupancy heatmap + waterfall from the radio (no recordings).
+Note: ONE dongle can decode (collector) OR sweep (spectrum) at a time — the sweep will ask you to
+stop the collector if it's holding the dongle (a 2nd dongle lets you do both):
+  sudo systemctl stop subcensuspi-collector    # then Run the sweep; start it again after
 
 Edit config.yaml (dongle serial / place / MQTT) then restart:
   \$EDITOR $DEST/pi/config.yaml && sudo systemctl restart subcensuspi-collector

@@ -13,6 +13,8 @@ fixture (Debug §4). Only the live sweep needs a dongle (TODO(hw)).
 from __future__ import annotations
 
 import csv
+import shutil
+import subprocess
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -77,6 +79,42 @@ def parse_rtl_power_csv(path: str | Path):
                     continue
                 center = int(low + step * i + step // 2)
                 yield center, dbm, ts, low
+
+
+# --- live rtl_power sweep (real hardware) ---
+
+# CC1101-comparable ISM span; rtl_power sweeps it by retuning across the range.
+DEFAULT_SWEEP_RANGE = "300M:928M:1M"
+
+
+def rtl_power_available() -> bool:
+    return shutil.which("rtl_power") is not None
+
+
+def sweep_live_to_csv(
+    out_path: str | Path,
+    *,
+    freq_range: str = DEFAULT_SWEEP_RANGE,
+    integration_s: int = 1,
+    duration_s: int = 20,
+    device: str | int | None = None,
+    timeout_s: int = 300,
+) -> Path:
+    """Run a REAL rtl_power sweep and write its CSV to out_path. Sweeps the ISM range for
+    `duration_s` (multiple passes → real occupancy), integrating `integration_s` per line.
+    Raises FileNotFoundError if rtl_power is missing, or subprocess errors on a busy/absent dongle
+    (usb_claim_interface -6 => the dvb_usb_rtl28xxu kernel driver still holds the device: blacklist
+    it; or the collector is using the dongle — stop it first)."""
+    if not rtl_power_available():
+        raise FileNotFoundError("rtl_power not found — install rtl-sdr (sudo apt install rtl-sdr)")
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    argv = ["rtl_power", "-f", freq_range, "-i", str(integration_s), "-e", str(duration_s)]
+    if device not in (None, ""):
+        argv += ["-d", str(device)]
+    argv += [str(out_path)]
+    subprocess.run(argv, check=True, timeout=timeout_s)
+    return out_path
 
 
 # --- occupancy computation ---
