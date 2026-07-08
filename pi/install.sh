@@ -80,7 +80,9 @@ install_services() {
             sudo tee "/etc/systemd/system/$unit.service" >/dev/null
     done
     sudo systemctl daemon-reload
-    sudo systemctl enable --now subcensuspi-collector subcensuspi-web
+    sudo systemctl enable subcensuspi-collector subcensuspi-web
+    # restart (not just start) so re-running the installer picks up pulled code changes
+    sudo systemctl restart subcensuspi-collector subcensuspi-web
     sleep 1
     sudo systemctl --no-pager --lines=0 status subcensuspi-collector || true
 }
