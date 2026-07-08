@@ -123,6 +123,24 @@ def test_recon_run_from_recorded_sweep(sweep, tmp_path):
 
 # --- occupancy heatmap (tier 1) + sweep waterfall (tier 2), Pi §7 ---
 
+def test_parse_real_rtl_power_float_step(tmp_path):
+    """A real `rtl_power` line has a FLOAT step column and >1 dBm per row — must not crash and
+    must bin by the dBm count (regression: int('1000000.00') used to raise ValueError)."""
+    csv_path = tmp_path / "live.csv"
+    csv_path.write_text(
+        "2026-07-08, 06:49:41, 300000000, 301000000, 1000000.00, 1, 18.16, 22.50\n"
+        "2026-07-08, 06:49:41, 433000000, 434000000, 1000000.00, 1, -95.0, -55.0\n"
+    )
+    samples = list(op.parse_rtl_power_csv(csv_path))
+    assert len(samples) == 4  # 2 rows x 2 dBm bins
+    freqs = {f for f, _d, _ts, _b in samples}
+    # 1 MHz span / 2 bins -> centers at low+250k and low+750k
+    assert 300_250_000 in freqs and 300_750_000 in freqs
+    # the hot -55 bin lands in the second 433 sub-bin
+    hot = next(d for f, d, _ts, _b in samples if f == 433_750_000)
+    assert hot == -55.0
+
+
 def test_bucket_sweep_peak_hold():
     freqs = op._bucket_freqs(300_000_000, 900_000_000, 6)
     assert len(freqs) == 6

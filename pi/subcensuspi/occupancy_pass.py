@@ -58,7 +58,12 @@ class Pin:
 
 def parse_rtl_power_csv(path: str | Path):
     """Yield (freq_hz, dbm, ts_iso, band_low) samples from an rtl_power CSV (bins expanded).
-    band_low identifies the sweep band, so the noise floor can be estimated per band (§3.3)."""
+    band_low identifies the sweep band, so the noise floor can be estimated per band (§3.3).
+
+    rtl_power line: date, time, Hz_low, Hz_high, Hz_step, samples, dbm, dbm, ...  — where the
+    step column is often a FLOAT (e.g. "1000000.00") and the number of dBm values, not the step,
+    defines how many bins the [low,high) span is split into. We derive the bin width from the
+    actual dBm count so it's robust across rtl_power builds."""
     with Path(path).open("r", encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
@@ -68,17 +73,24 @@ def parse_rtl_power_csv(path: str | Path):
             if len(parts) < 7:
                 continue
             date, tm = parts[0], parts[1]
-            low, high, step = int(parts[2]), int(parts[3]), int(parts[4])
+            try:
+                low, high = float(parts[2]), float(parts[3])
+            except ValueError:
+                continue
+            dbms = parts[6:]  # cols 4 (step) + 5 (samples) are ignored; the rest are dBm bins
+            n = len(dbms)
+            if n == 0 or high <= low:
+                continue
             ts = f"{date}T{tm}"
-            dbms = parts[6:]
-            nbins = round((high - low) / step)
-            for i in range(min(nbins, len(dbms))):
+            band_low = int(low)
+            bin_w = (high - low) / n
+            for i in range(n):
                 try:
                     dbm = float(dbms[i])
                 except ValueError:
                     continue
-                center = int(low + step * i + step // 2)
-                yield center, dbm, ts, low
+                center = int(low + bin_w * (i + 0.5))
+                yield center, dbm, ts, band_low
 
 
 # --- live rtl_power sweep (real hardware) ---
