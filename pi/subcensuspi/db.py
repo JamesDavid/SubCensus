@@ -86,7 +86,26 @@ class Reception:
 class Database:
     def __init__(self, path: str | Path):
         self.path = str(path)
-        self.conn = sqlite3.connect(self.path)
+        # sqlite won't create missing parent dirs — do it ourselves so a fresh install (or a
+        # custom db_path) Just Works instead of failing with "unable to open database file".
+        parent = Path(self.path).parent
+        if str(parent) not in ("", "."):
+            try:
+                parent.mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                raise RuntimeError(
+                    f"SubCensusPi: cannot create the database directory {parent} "
+                    f"({e.strerror}). Run pi/install.sh (it provisions "
+                    f"/var/lib/subcensuspi owned by you), or set db_path / --db to a "
+                    f"writable path."
+                ) from e
+        try:
+            self.conn = sqlite3.connect(self.path)
+        except sqlite3.OperationalError as e:
+            raise RuntimeError(
+                f"SubCensusPi: cannot open the database {self.path!r} ({e}). The parent "
+                f"directory may be unwritable — see pi/install.sh or use --db <writable path>."
+            ) from e
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA foreign_keys=ON")

@@ -3,19 +3,25 @@
 #
 #   curl -sSL https://raw.githubusercontent.com/JamesDavid/SubCensus/master/pi/install.sh | bash
 #
-# Installs the system deps (rtl-433 + RTL-SDR), clones the repo, creates a venv, installs the
-# pi package, and seeds config.yaml. Override the target dir with SUBCENSUS_DIR=/path.
+# Updates the system, installs the deps (rtl-433 + RTL-SDR), clones the repo, creates a venv,
+# installs the pi package, provisions the data dir, and seeds config.yaml. Override the target
+# dir with SUBCENSUS_DIR=/path. Skip the system upgrade with SUBCENSUS_NO_UPGRADE=1.
 # RX-only; no radio is touched by the install — a dongle is only needed to receive.
 set -euo pipefail
 
 REPO_URL="https://github.com/JamesDavid/SubCensus.git"
 DEST="${SUBCENSUS_DIR:-$HOME/SubCensus}"
+DATA_DIR="${SUBCENSUS_DATA_DIR:-/var/lib/subcensuspi}"   # matches config.example.yaml defaults
 
 echo "== SubCensusPi installer =="
 
-# 1. system packages: rtl_433 + RTL-SDR + python toolchain
+# 1. update the system + install packages: rtl_433 + RTL-SDR + python toolchain
 if command -v apt-get >/dev/null 2>&1; then
     sudo apt-get update
+    if [ "${SUBCENSUS_NO_UPGRADE:-0}" != "1" ]; then
+        echo "-- upgrading installed packages (SUBCENSUS_NO_UPGRADE=1 to skip)"
+        sudo DEBIAN_FRONTEND=noninteractive apt-get -y upgrade
+    fi
     sudo apt-get install -y git python3 python3-venv python3-pip rtl-433 rtl-sdr librtlsdr-dev
 else
     echo "!! non-apt system: install git, python3-venv, rtl-433 and librtlsdr yourself, then re-run."
@@ -39,7 +45,15 @@ python3 -m venv .venv
 pip install --upgrade pip
 pip install -e '.[dev]'
 
-# 4. seed a config if there isn't one yet
+# 4. provision the data dir (owned by the invoking user) so the default db_path / places_dir /
+#    signatures_dir / iq_dir are writable for a manual run AND for the systemd services.
+if command -v install >/dev/null 2>&1; then
+    echo "-- provisioning $DATA_DIR (owned by $USER)"
+    sudo install -d -o "$USER" -g "$(id -gn)" \
+        "$DATA_DIR" "$DATA_DIR/places" "$DATA_DIR/signatures" "$DATA_DIR/iq"
+fi
+
+# 5. seed a config if there isn't one yet
 [ -f config.yaml ] || cp config.example.yaml config.yaml
 
 cat <<MSG
