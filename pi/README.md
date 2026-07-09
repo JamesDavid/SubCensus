@@ -30,37 +30,51 @@ pip install -e .[dev]        # fastapi, uvicorn, jinja2, python-multipart, paho-
 
 ## Run
 
-```
-# collector: rtl_433 -> SQLite  (live needs a dongle)
-python -m subcensuspi.collector.main --config config.yaml
+**One process owns the radio: the dashboard.** It switches the single dongle between three
+mutually-exclusive modes — **off**, **decode** (the rtl_433 census), and **spectrum** (a live
+rtl_power waterfall) — from the **Capture** control in the browser. There is no separate
+collector process to run or fight over the dongle; decode runs as a managed subprocess inside
+the web app.
 
-# no hardware: drive the full decode -> catalog -> SQLite path from recorded rtl_433 JSON
+```
+# the dashboard (owns the radio). Point it at the catalog, place dir, decode config, and the
+# file that remembers the selected mode across reboots.
+SUBCENSUSPI_DB=/tmp/census.db \
+SUBCENSUSPI_PLACES_DIR=/var/lib/subcensuspi/places \
+SUBCENSUSPI_CONFIG=config.yaml \
+SUBCENSUSPI_RADIO_STATE=/tmp/radio_state.json \
+    uvicorn subcensuspi.web.app:app --host 0.0.0.0 --port 8080
+# -> open http://<host>:8080/ and pick Decode or Live spectrum in the Capture control.
+
+# no hardware: drive the full decode -> catalog -> SQLite path from recorded rtl_433 JSON.
+# (This is the same collector CLI the dashboard's Decode mode launches for you.)
 python -m subcensuspi.collector.main --config config.example.yaml \
     --replay ../test/fixtures/rtl433/home_stream.jsonl --db /tmp/census.db
-
-# dashboard
-SUBCENSUSPI_DB=/tmp/census.db uvicorn subcensuspi.web.app:app --host 0.0.0.0 --port 8080
 ```
 
 Config is `config.example.yaml` (Pi §8): dongles (single-hop or multi-dongle by serial),
 `place`, `places_dir`, global `signatures_dir`, `iq_dir` + `max_iq_gb` disk guard, MQTT/HA,
 web host/port, and opt-in `prioritize_watchlist` (reorder hop/dongle attention by the place
-watchlist, §3). Two systemd services in production (Pi §9): `collector` + `web`.
+watchlist, §3). **One** systemd service in production (Pi §9): `subcensuspi`.
 
 ### Run under systemd (Pi §9)
 
-Unit files live in [`subcensuspi/systemd/`](./subcensuspi/systemd/):
-`subcensuspi-collector.service` (owns rtl_433 → SQLite + MQTT/HA) and
-`subcensuspi-web.service` (uvicorn dashboard, ordered after the collector). Both are
-`Restart=always`; the collector *additionally* relaunches a dead rtl_433 per-dongle with
-backoff internally (Pi §9), so one failed dongle never restarts the others. Edit the
-`User=`/`WorkingDirectory=`/`ExecStart=` paths to match your install, then:
+One unit lives in [`subcensuspi/systemd/`](./subcensuspi/systemd/): `subcensuspi.service` — the
+uvicorn dashboard that owns the dongle and runs decode/spectrum on demand. It is
+`Restart=always`; decode *additionally* relaunches a dead rtl_433 per-dongle with backoff
+internally (Pi §9), so one failed dongle never restarts the others. The last-selected radio mode
+is persisted (`SUBCENSUSPI_RADIO_STATE`) and re-applied on boot, so a headless Pi resumes
+decoding by itself. Edit the `User=`/`WorkingDirectory=`/`ExecStart=`/`Environment=` lines to
+match your install, then:
 
 ```
-sudo cp subcensuspi/systemd/subcensuspi-*.service /etc/systemd/system/
+sudo cp subcensuspi/systemd/subcensuspi.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now subcensuspi-collector subcensuspi-web
+sudo systemctl enable --now subcensuspi
 ```
+
+(`pi/install.sh` does all of this for you, and removes any pre-refactor
+`subcensuspi-collector`/`subcensuspi-web` units so they can't keep fighting for the dongle.)
 
 ### Export into the shared brain (Pi §10a)
 
@@ -98,17 +112,25 @@ Everything is **RX-only** — there is no transmit control anywhere in the UI.
   summary · Sample · Class**. **Sample** links to `inspect`/download the recorded IQ (`.cu8`) so
   you can eyeball or replay it in an external tool; you assign a class + notes or discard. (Shows
   "No unknowns captured" when the corpus is clean, as in the fixture above.)
-- **Bands — occupancy heatmap & watchlist** — the recon surface. The **Recon** buttons run
-  **Run (Accumulate)** / **Run (Fresh)** / **Reset (keep pins)** / **Reset (wipe pins)** (System
-  §9, from a recorded `rtl_power` sweep; a live sweep is `TODO(hw)`). A canvas draws the
+- **Capture — one radio** (top bar) — the single control that owns the dongle. Buttons **Off** /
+  **Decode** / **Live spectrum** plus a **band** select. **Decode** is the rtl_433 census (the 24/7
+  default — populates Devices/Live feed/Unknowns); **Live spectrum** runs a continuous `rtl_power`
+  waterfall on the chosen band. They are mutually exclusive (one radio) — switching stops the
+  other automatically, and the chosen mode is remembered across reboots. Status shows what the
+  radio is doing (and why it stopped, if a mode dies). Backed by `GET`/`POST /api/radio`.
+- **Bands — occupancy heatmap & watchlist** — the recon surface. Pick a **band** (315/433/ISM/…)
+  and press **▶ Live spectrum** for a continuous live sweep, or the **Recon** buttons — **Run
+  (Accumulate)** / **Run (Fresh)** / **Reset (keep pins)** / **Reset (wipe pins)** — for a one-shot
+  sweep that accumulates into `occupancy.csv` (System §9). Both run a **real `rtl_power` sweep on
+  the dongle** (they take over the radio like the Capture control does). A canvas draws the
   **occupancy heatmap strip** (per-bin busy %) over a **sweep waterfall** (freq × time, newest on
-  top) from the retained `rtl_power` sweeps (`/api/spectrum`). Below, the ranked `occupancy.csv`
-  (**Freq · Occupancy · Peak · Noise · Crossings · Last seen**) and the derived `watchlist.csv`
-  with per-entry **pin / exclude**. Needs `places_dir` set in the config.
+  top). Below, the ranked `occupancy.csv` (**Freq · Occupancy · Peak · Noise · Crossings · Last
+  seen**) and the derived `watchlist.csv` with per-entry **pin / exclude**. Needs `places_dir` set.
 
-**Scripting / headless:** every view has a JSON endpoint — `GET /api/devices`,
-`/api/device/{id}/activity` (sparkline bins), `/api/occupancy`, `/api/watchlist`,
-`/api/unknown/{id}/inspect` (+ `/iq`); `POST /api/label`, `/api/recon`, `/api/watchlist/pin`.
+**Scripting / headless:** every view has a JSON endpoint — `GET /api/radio` (+ `POST` to switch
+mode), `GET /api/spectrum/live`, `GET /api/devices`, `/api/device/{id}/activity` (sparkline bins),
+`/api/occupancy`, `/api/watchlist`, `/api/unknown/{id}/inspect` (+ `/iq`); `POST /api/label`,
+`/api/recon`, `/api/watchlist/pin`.
 
 **Places, field-maps, and LLM analysis are not web tabs** (they're not per-session UI): the active
 place is set in `config.yaml` (`place:`); field-map discovery runs passively over the events

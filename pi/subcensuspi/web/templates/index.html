@@ -34,6 +34,28 @@
     <div class="muted">Wideband RTL-SDR ISM census — RX only. {{ devices|length }} devices.</div>
   </header>
   <main>
+    <!-- Capture: the one web-controlled radio owner (Pi §3, §9). One dongle, one mode at a time. -->
+    <section class="wide" id="capture">
+      <h2>Capture <span class="muted">one radio — off · decode (census) · live spectrum</span></h2>
+      <div class="controls">
+        <button class="ghost" data-mode="off" id="mode-off">⏹ Off</button>
+        <button data-mode="decode" id="mode-decode">📟 Decode</button>
+        <button data-mode="spectrum" id="mode-spectrum">📈 Live spectrum</button>
+        <span class="muted">band:</span>
+        <select id="cap-band">
+          <option value="ism">ISM cluster 300–470</option>
+          <option value="315">315 MHz (tight)</option>
+          <option value="433">433.92 MHz (tight)</option>
+          <option value="915">915 MHz</option>
+          <option value="full">Full 300–928 (coarse)</option>
+        </select>
+        <span class="muted" id="radio-out">…</span>
+      </div>
+      <div class="muted" style="font-size:11px">
+        Decode = the rtl_433 census (the 24/7 default). Live spectrum = continuous rtl_power
+        waterfall on the band above. They can't run together (one radio); switching stops the other.
+      </div>
+    </section>
     <section>
       <h2>Devices</h2>
       <table id="devices">
@@ -359,9 +381,54 @@
     var lx = document.getElementById('live-stop');
     if (lx) lx.addEventListener('click', function () {
       fetch('/api/spectrum/live', { method: 'POST', body: new URLSearchParams({ action: 'stop' }) })
-        .then(function () { stopLivePolling();
+        .then(function () { stopLivePolling(); radioPoll();
           document.getElementById('live-out').textContent = 'stopped'; });
     });
+
+    // --- Capture: the single web-controlled radio owner (off | decode | spectrum) (Pi §3, §9) ---
+    function radioSetMode(mode) {
+      const out = document.getElementById('radio-out');
+      out.style.color = '#8b93a1'; out.textContent = 'switching to ' + mode + '…';
+      const body = { mode: mode };
+      if (mode === 'spectrum') body.band = document.getElementById('cap-band').value;
+      fetch('/api/radio', { method: 'POST', body: new URLSearchParams(body) })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; },
+                                                  function () { return { ok: r.ok, j: {} }; }); })
+        .then(function (res) {
+          if (!res.ok) { out.style.color = '#f0a0a0';
+            out.textContent = mode + ' failed: ' + (res.j.detail || 'error'); return; }
+          applyRadio(res.j);
+        }).catch(function (e) { out.style.color = '#f0a0a0'; out.textContent = 'error: ' + e; });
+    }
+    function applyRadio(st) {
+      if (!st) return;
+      const out = document.getElementById('radio-out');
+      ['off', 'decode', 'spectrum'].forEach(function (m) {
+        const b = document.getElementById('mode-' + m);
+        if (b) b.classList.toggle('ghost', st.mode !== m);  // active mode = solid, others = ghost
+      });
+      let txt = '';
+      if (st.mode === 'decode') {
+        txt = st.decode && st.decode.running ? '● decoding (census running)' : 'decode starting…';
+      } else if (st.mode === 'spectrum') {
+        txt = '● live spectrum ' + ((st.spectrum && st.spectrum.range) || '');
+      } else { txt = 'radio off (dongle free)'; }
+      out.style.color = st.error ? '#f0a0a0' : (st.mode === 'off' ? '#8b93a1' : '#6fd08c');
+      out.textContent = txt + (st.error ? ' · ' + st.error : '');
+      // Drive the waterfall live-poll loop from the radio mode so it follows spectrum on/off.
+      if (st.mode === 'spectrum') {
+        if (!liveTimer) { livePoll(); liveTimer = setInterval(livePoll, 1000); }
+      } else { stopLivePolling(); }
+    }
+    ['off', 'decode', 'spectrum'].forEach(function (m) {
+      const b = document.getElementById('mode-' + m);
+      if (b) b.addEventListener('click', function () { radioSetMode(m); });
+    });
+    function radioPoll() {
+      fetch('/api/radio').then(function (r) { return r.json(); }).then(applyRadio).catch(function () {});
+    }
+    radioPoll();
+    setInterval(radioPoll, 3000);
 
     // --- live feed ---
     function renderFeed(events) {

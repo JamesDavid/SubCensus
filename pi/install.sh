@@ -4,10 +4,14 @@
 #   curl -sSL https://raw.githubusercontent.com/JamesDavid/SubCensus/master/pi/install.sh | bash
 #
 # Installs the deps (rtl-433 + RTL-SDR), clones the repo, creates a venv, installs the pi
-# package, provisions the data dir, seeds config.yaml, and starts the services. Safe to re-run:
+# package, provisions the data dir, seeds config.yaml, and starts the ONE service. Safe to re-run:
 # every step is idempotent (already-installed apt packages are skipped, the repo fast-forwards,
-# the venv/pip/services just refresh). A FULL `apt upgrade` is opt-in (SUBCENSUS_UPGRADE=1) so
+# the venv/pip/service just refresh). A FULL `apt upgrade` is opt-in (SUBCENSUS_UPGRADE=1) so
 # re-runs are fast. Override the target dir with SUBCENSUS_DIR=/path.
+#
+# ONE service (`subcensuspi`) runs the web dashboard, and the dashboard OWNS the single dongle:
+# it switches the radio between off / decode (rtl_433 census) / spectrum (live rtl_power waterfall)
+# from the Capture control — no separate collector service, so two processes never fight one radio.
 # RX-only; no radio is touched by the install — a dongle is only needed to receive.
 set -euo pipefail
 
@@ -64,27 +68,38 @@ if command -v install >/dev/null 2>&1; then
         "$DATA_DIR" "$DATA_DIR/places" "$DATA_DIR/signatures" "$DATA_DIR/iq"
 fi
 
-# 5. seed a config if there isn't one yet
+# 5. seed a config if there isn't one yet — both a local copy (for a manual foreground run) and
+#    the one the service reads for decode mode ($DATA_DIR/config.yaml, per the systemd unit).
 [ -f config.yaml ] || cp config.example.yaml config.yaml
+[ -f "$DATA_DIR/config.yaml" ] || cp config.example.yaml "$DATA_DIR/config.yaml"
 
-# 6. install + start the systemd services so the collector + dashboard auto-run on boot and
-#    restart on crash (this is the default; opt out with SUBCENSUS_NO_SERVICE=1). The collector
-#    tolerates a missing/idle dongle — its per-dongle supervisor just keeps retrying with backoff,
-#    so the service stays up either way (Pi §9).
-install_services() {
-    echo "-- installing + starting systemd services (User=$USER, dir=$DEST/pi)"
-    for unit in subcensuspi-collector subcensuspi-web; do
-        sed -e "s|^User=pi\$|User=$USER|" \
-            -e "s|/home/pi/SubCensus|$DEST|g" \
-            "$DEST/pi/subcensuspi/systemd/$unit.service" |
-            sudo tee "/etc/systemd/system/$unit.service" >/dev/null
+# 6. drop any pre-refactor two-service install so it can't keep fighting for the dongle.
+if command -v systemctl >/dev/null 2>&1; then
+    for old in subcensuspi-collector subcensuspi-web; do
+        if [ -f "/etc/systemd/system/$old.service" ]; then
+            echo "-- removing old service $old (folded into the single subcensuspi service)"
+            sudo systemctl disable --now "$old" 2>/dev/null || true
+            sudo rm -f "/etc/systemd/system/$old.service"
+        fi
     done
+fi
+
+# 7. install + start the ONE systemd service so the dashboard (which owns the radio) auto-runs on
+#    boot and restarts on crash (default; opt out with SUBCENSUS_NO_SERVICE=1). The last-selected
+#    radio mode is persisted and re-applied on boot, so a headless Pi resumes decoding by itself.
+#    Decode tolerates a missing/idle dongle — its per-dongle supervisor retries with backoff (§9).
+install_services() {
+    echo "-- installing + starting the subcensuspi service (User=$USER, dir=$DEST/pi)"
+    sed -e "s|^User=pi\$|User=$USER|" \
+        -e "s|/home/pi/SubCensus|$DEST|g" \
+        "$DEST/pi/subcensuspi/systemd/subcensuspi.service" |
+        sudo tee "/etc/systemd/system/subcensuspi.service" >/dev/null
     sudo systemctl daemon-reload
-    sudo systemctl enable subcensuspi-collector subcensuspi-web
+    sudo systemctl enable subcensuspi
     # restart (not just start) so re-running the installer picks up pulled code changes
-    sudo systemctl restart subcensuspi-collector subcensuspi-web
+    sudo systemctl restart subcensuspi
     sleep 1
-    sudo systemctl --no-pager --lines=0 status subcensuspi-collector || true
+    sudo systemctl --no-pager --lines=0 status subcensuspi || true
 }
 if command -v systemctl >/dev/null 2>&1 && [ "${SUBCENSUS_NO_SERVICE:-0}" != "1" ]; then
     install_services
@@ -101,29 +116,34 @@ MSG
 if [ "$STARTED" = "1" ]; then
 cat <<MSG
 
-The collector + dashboard are RUNNING as systemd services (auto-start on boot):
+The SubCensusPi dashboard is RUNNING as one systemd service (auto-starts on boot):
   dashboard   ->  http://${IP:-<pi-ip>}:8080
-  live logs   ->  journalctl -u subcensuspi-collector -f
-  status      ->  systemctl status subcensuspi-collector subcensuspi-web
+  live logs   ->  journalctl -u subcensuspi -f
+  status      ->  systemctl status subcensuspi
 
-Check the dongle is claimable now (should say "Found 1... Sampling", NO error -6):
+ONE service owns the ONE dongle. Pick what the radio does from the dashboard's Capture control:
+  Off        - radio idle, dongle free (e.g. for 'rtl_test -t')
+  Decode     - the rtl_433 census (the 24/7 default; writes the device catalog + MQTT/HA)
+  Spectrum   - continuous live rtl_power waterfall on the chosen band (315/433/ISM/…)
+They are mutually exclusive (one radio) — switching modes stops the other automatically. The
+selected mode is remembered and resumes on reboot.
+
+Check the dongle is claimable (set Capture to Off first; should say "Found 1... Sampling", NO -6):
   rtl_test -t
 
-LIVE SPECTRUM: on the dashboard's Bands tab, "Run (Accumulate/Fresh)" now does a REAL rtl_power
-sweep on the dongle and draws the occupancy heatmap + waterfall from the radio (no recordings).
-Note: ONE dongle can decode (collector) OR sweep (spectrum) at a time — the sweep will ask you to
-stop the collector if it's holding the dongle (a 2nd dongle lets you do both):
-  sudo systemctl stop subcensuspi-collector    # then Run the sweep; start it again after
-
-Edit config.yaml (dongle serial / place / MQTT) then restart:
-  \$EDITOR $DEST/pi/config.yaml && sudo systemctl restart subcensuspi-collector
+Edit the decode config (dongle serial / place / MQTT) then restart:
+  \$EDITOR $DATA_DIR/config.yaml && sudo systemctl restart subcensuspi
 MSG
 else
 cat <<MSG
 
-Services were not started (no systemd, or SUBCENSUS_NO_SERVICE=1). Run in the foreground:
+The service was not started (no systemd, or SUBCENSUS_NO_SERVICE=1). Run the dashboard yourself
+(it owns the radio; switch decode/spectrum from the Capture control in the browser):
   cd $DEST/pi && . .venv/bin/activate
-  python -m subcensuspi.collector.main --config config.yaml
-  SUBCENSUSPI_DB=$DATA_DIR/census.db uvicorn subcensuspi.web.app:app --host 0.0.0.0 --port 8080
+  SUBCENSUSPI_DB=$DATA_DIR/census.db \\
+    SUBCENSUSPI_PLACES_DIR=$DATA_DIR/places \\
+    SUBCENSUSPI_CONFIG=$DATA_DIR/config.yaml \\
+    SUBCENSUSPI_RADIO_STATE=$DATA_DIR/radio_state.json \\
+    uvicorn subcensuspi.web.app:app --host 0.0.0.0 --port 8080
 MSG
 fi

@@ -28,5 +28,11 @@ place interchangeable (System §7 binding).
   (Playwright optional). MQTT/HA discovery tested via a **fake broker** (payload assertions).
 
 ## Build / run (Linux target)
-`pip install -e .[dev]` (from `pi/`). Collector + web run under systemd (§9). Locally:
-`python -m subcensuspi.collector.main --config config.yaml` and `uvicorn subcensuspi.web.app:app`.
+`pip install -e .[dev]` (from `pi/`). **ONE** systemd service in production (§9):
+`subcensuspi` (the uvicorn dashboard). The dashboard OWNS the single dongle via `radio.py`'s
+`RadioManager` and switches it between mutually-exclusive modes — **off / decode / spectrum** —
+from the Capture control; `rtl_433` (decode) and `rtl_power` (spectrum) can't share one radio, so
+there is no separate collector service. Decode mode launches the collector CLI
+(`python -m subcensuspi.collector.main --config …`) as a managed subprocess; that CLI is also the
+no-hardware replay path for tests/CI. Locally: `uvicorn subcensuspi.web.app:app` (set
+`SUBCENSUSPI_CONFIG`/`SUBCENSUSPI_RADIO_STATE` for decode + boot-resume).

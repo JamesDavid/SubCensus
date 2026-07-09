@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from ..db import Database
 import subprocess
 
 from ..live_sweep import LiveSweeper
+from ..radio import RadioManager
 from ..occupancy_pass import (
     SWEEP_PRESETS,
     read_occupancy_csv,
@@ -85,12 +87,32 @@ def sparkline(counts: list[int]) -> str:
     return "".join(_SPARK_BLOCKS[round(c / hi * top)] for c in counts)
 
 
-def create_app(db_path: str, place: str | None = None, places_dir: str | None = None) -> FastAPI:
-    app = FastAPI(title="SubCensusPi")
+def create_app(
+    db_path: str,
+    place: str | None = None,
+    places_dir: str | None = None,
+    config_path: str | None = None,
+    radio_state_path: str | None = None,
+) -> FastAPI:
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        app.state.radio.resume()  # headless boot: re-apply the last selected mode (best-effort)
+        yield
+        try:
+            app.state.radio.set_mode("off")  # clean teardown so the dongle is freed on restart
+        except Exception:  # pragma: no cover
+            pass
+
+    app = FastAPI(title="SubCensusPi", lifespan=lifespan)
     app.state.db_path = db_path
     app.state.place = place
     app.state.places_dir = places_dir
     app.state.live = LiveSweeper()  # continuous live-spectrum streamer (Pi §7)
+    # One web-controlled owner of the dongle: off / decode / spectrum (Pi §3, §9). The decode
+    # collector runs as a managed subprocess; spectrum uses the LiveSweeper above.
+    app.state.radio = RadioManager(
+        app.state.live, config_path=config_path, state_path=radio_state_path
+    )
 
     def get_db() -> Database:
         return Database(app.state.db_path)
@@ -254,19 +276,41 @@ def create_app(db_path: str, place: str | None = None, places_dir: str | None = 
     @app.post("/api/spectrum/live")
     def api_spectrum_live_ctl(action: str = Form(...), band: str = Form(default="ism")):
         """Start/stop the continuous live sweep on the dongle (Pi §7). `band` is a preset
-        (ism/315/433/915/full) or a raw low:high:bin. Uses the dongle exclusively — stop the
-        collector first (one radio)."""
-        live = app.state.live
+        (ism/315/433/915/full) or a raw low:high:bin. Routes through the radio manager so it takes
+        the dongle exclusively — starting it stops decode; stopping it leaves the radio off."""
+        radio = app.state.radio
         if action == "stop":
-            live.stop()
+            radio.set_mode("off")
             return {"running": False}
         if action != "start":
             raise HTTPException(status_code=400, detail="action must be start|stop")
         try:
-            rng = live.start(band)
+            radio.set_mode("spectrum", band=band)
         except FileNotFoundError as e:
             raise HTTPException(status_code=503, detail=str(e))
-        return {"running": True, "range": rng, "presets": list(SWEEP_PRESETS)}
+        return {"running": True, "range": resolve_range(band), "presets": list(SWEEP_PRESETS)}
+
+    # --- Radio owner: one dongle, one mode (Pi §3, §9) ---
+
+    @app.get("/api/radio")
+    def api_radio_status():
+        """Current radio state: {mode(off|decode|spectrum), band, error, decode{}, spectrum{}}.
+        The dashboard Capture control polls this to show what the single dongle is doing."""
+        return app.state.radio.status()
+
+    @app.post("/api/radio")
+    def api_radio_ctl(mode: str = Form(...), band: str = Form(default="")):
+        """Switch the dongle between off / decode / spectrum (mutually exclusive — one radio).
+        `decode` runs the collector (census); `spectrum` runs the live waterfall on `band`."""
+        radio = app.state.radio
+        try:
+            return radio.set_mode(mode, band=band or None)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except FileNotFoundError as e:  # rtl_power missing (spectrum)
+            raise HTTPException(status_code=503, detail=str(e))
+        except RuntimeError as e:  # rtl_433 / config missing (decode)
+            raise HTTPException(status_code=503, detail=str(e))
 
     @app.post("/api/recon/run")
     def api_run(
@@ -456,9 +500,12 @@ def create_app(db_path: str, place: str | None = None, places_dir: str | None = 
     return app
 
 
-# ASGI entry for uvicorn.
+# ASGI entry for uvicorn. SUBCENSUSPI_CONFIG points decode mode at the collector config;
+# SUBCENSUSPI_RADIO_STATE persists the selected mode so a headless Pi resumes it on boot.
 app = create_app(
     os.environ.get(DB_PATH_ENV, "census.db"),
     place=os.environ.get("SUBCENSUSPI_PLACE"),
     places_dir=os.environ.get("SUBCENSUSPI_PLACES_DIR"),
+    config_path=os.environ.get("SUBCENSUSPI_CONFIG"),
+    radio_state_path=os.environ.get("SUBCENSUSPI_RADIO_STATE"),
 )
