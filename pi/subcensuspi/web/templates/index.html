@@ -224,13 +224,25 @@
       });
     });
     function recon(out, url, extra) {
+      var el = document.getElementById('recon-out');
+      el.style.color = '#e6e6e6';
+      el.textContent = '⟳ sweeping the dongle live (~20 s)…';
       fetch(url, { method: 'POST', body: placeBody(extra) }).then(function (r) {
-        return r.json().then(function (j) { return { ok: r.ok, j: j }; });
+        return r.json().then(function (j) { return { ok: r.ok, j: j }; },
+                             function () { return { ok: r.ok, j: {} }; });
       }).then(function (res) {
-        document.getElementById('recon-out').textContent =
-          res.ok ? 'done' : (res.j.detail || 'failed');
-        if (res.ok) setTimeout(function () { location.reload(); }, 400);
-      }).catch(function () {});
+        if (res.ok) {
+          el.style.color = '#6fd08c';
+          el.textContent = 'done — ' + (res.j.bins || 0) + ' bins swept';
+          setTimeout(function () { location.reload(); }, 600);
+        } else {
+          el.style.color = '#f0a0a0';
+          el.textContent = 'FAILED: ' + (res.j.detail || ('HTTP error'));
+        }
+      }).catch(function (e) {
+        el.style.color = '#f0a0a0';
+        el.textContent = 'request failed: ' + e;
+      });
     }
     var ra = document.getElementById('run-accumulate');
     if (ra) ra.addEventListener('click', function () { recon(null, '/api/recon/run', { mode: 'accumulate' }); });
