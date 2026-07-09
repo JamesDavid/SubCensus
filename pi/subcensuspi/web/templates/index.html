@@ -107,7 +107,20 @@
     <section class="wide">
       <h2>Bands <span class="muted">occupancy heatmap &amp; watchlist</span></h2>
       <div class="controls">
-        <span class="muted">Recon:</span>
+        <span class="muted">Band:</span>
+        <select id="band">
+          <option value="ism">ISM cluster 300–470 (315/390/418/433)</option>
+          <option value="315">315 MHz (tight)</option>
+          <option value="433">433.92 MHz (tight)</option>
+          <option value="915">915 MHz</option>
+          <option value="full">Full 300–928 (coarse)</option>
+        </select>
+        <button id="live-start">▶ Live spectrum</button>
+        <button class="danger" id="live-stop">⏹ Stop</button>
+        <span class="muted" id="live-out"></span>
+      </div>
+      <div class="controls">
+        <span class="muted">Recon pass:</span>
         <button class="ghost" id="run-accumulate">Run (Accumulate)</button>
         <button class="ghost" id="run-fresh">Run (Fresh)</button>
         <button class="danger" id="reset-keep">Reset (keep pins)</button>
@@ -244,10 +257,13 @@
         el.textContent = 'request failed: ' + e;
       });
     }
+    function reconBand() { return { band: document.getElementById('band').value }; }
     var ra = document.getElementById('run-accumulate');
-    if (ra) ra.addEventListener('click', function () { recon(null, '/api/recon/run', { mode: 'accumulate' }); });
+    if (ra) ra.addEventListener('click', function () {
+      recon(null, '/api/recon/run', Object.assign({ mode: 'accumulate' }, reconBand())); });
     var rf = document.getElementById('run-fresh');
-    if (rf) rf.addEventListener('click', function () { recon(null, '/api/recon/run', { mode: 'fresh' }); });
+    if (rf) rf.addEventListener('click', function () {
+      recon(null, '/api/recon/run', Object.assign({ mode: 'fresh' }, reconBand())); });
     var rk = document.getElementById('reset-keep');
     if (rk) rk.addEventListener('click', function () {
       if (confirm('Reset recon (keep pins)?')) recon(null, '/api/recon/reset', { keep_pins: 'true' }); });
@@ -262,25 +278,26 @@
       t = Math.max(0, Math.min(1, t));
       return 'hsl(' + ((1 - t) * 240) + ',85%,' + (28 + t * 30) + '%)';
     }
-    function drawWaterfall() {
+    // draw a spectrum (freqs+sweeps) into the canvas; `occ` (optional) paints the top strip.
+    function drawWaterfall(spec, occRows) {
       const cv = document.getElementById('waterfall');
       if (!cv) return;
       const ctx = cv.getContext('2d');
       const W = cv.width, H = cv.height;
       ctx.clearRect(0, 0, W, H);
-      const freqs = (SPECTRUM && SPECTRUM.freqs) || [];
-      const sweeps = (SPECTRUM && SPECTRUM.sweeps) || [];
+      const freqs = (spec && spec.freqs) || [];
+      const sweeps = (spec && spec.sweeps) || [];
       const stripH = 18, gap = 4, wfTop = stripH + gap, wfH = H - wfTop;
       if (freqs.length < 2) {
         ctx.fillStyle = '#8b93a1'; ctx.font = '12px system-ui';
-        ctx.fillText('No sweep data yet — Run an occupancy pass (Recon) above.', 10, H / 2);
+        ctx.fillText('No sweep data yet — press "▶ Live spectrum" or "Run" above.', 10, H / 2);
         return;
       }
       const nb = freqs.length, cellW = W / nb;
       const fmin = freqs[0], fmax = freqs[nb - 1], span = (fmax - fmin) || 1;
-      // occupancy strip: map occupancy bins onto the freq-bucket grid (peak-hold)
+      // occupancy strip (from a recon pass); blank in live mode
       const occ = new Array(nb).fill(null);
-      OCCUPANCY.forEach(function (b) {
+      (occRows || []).forEach(function (b) {
         const i = Math.round((b.freq_hz - fmin) / span * (nb - 1));
         if (i >= 0 && i < nb) occ[i] = Math.max(occ[i] || 0, b.occupancy);
       });
@@ -303,13 +320,48 @@
         }
       });
       document.getElementById('wf-axis').innerHTML =
-        '<span>' + (fmin / 1e6).toFixed(1) + ' MHz</span>' +
-        '<span>' + ((fmin + fmax) / 2e6).toFixed(1) + '</span>' +
-        '<span>' + (fmax / 1e6).toFixed(1) + ' MHz</span>';
+        '<span>' + (fmin / 1e6).toFixed(2) + ' MHz</span>' +
+        '<span>' + ((fmin + fmax) / 2e6).toFixed(2) + '</span>' +
+        '<span>' + (fmax / 1e6).toFixed(2) + ' MHz</span>';
       document.getElementById('wf-legend').textContent =
-        ' Waterfall dBm ' + dmin.toFixed(0) + ' (cold) → ' + dmax.toFixed(0) + ' (hot).';
+        ' dBm ' + dmin.toFixed(0) + ' (cold) → ' + dmax.toFixed(0) + ' (hot).';
     }
-    drawWaterfall();
+    drawWaterfall(SPECTRUM, OCCUPANCY);
+
+    // --- LIVE spectrum: stream rtl_power continuously and redraw ~1/s (Pi §7) ---
+    let liveTimer = null;
+    function livePoll() {
+      fetch('/api/spectrum/live').then(function (r) { return r.json(); }).then(function (j) {
+        const lo = document.getElementById('live-out');
+        if (j.error) { lo.style.color = '#f0a0a0'; lo.textContent = 'stopped: ' + j.error; }
+        else { lo.style.color = j.running ? '#6fd08c' : '#8b93a1';
+               lo.textContent = (j.running ? '● live ' : 'idle ') + (j.range || '') +
+                 ' · ' + ((j.sweeps || []).length) + ' sweeps'; }
+        if ((j.sweeps || []).length) drawWaterfall(j, []);   // no occupancy strip in live mode
+        if (!j.running && !((j.sweeps || []).length)) { stopLivePolling(); }
+      }).catch(function () {});
+    }
+    function stopLivePolling() { if (liveTimer) { clearInterval(liveTimer); liveTimer = null; } }
+    var ls = document.getElementById('live-start');
+    if (ls) ls.addEventListener('click', function () {
+      const band = document.getElementById('band').value;
+      document.getElementById('live-out').textContent = 'starting…';
+      fetch('/api/spectrum/live', { method: 'POST',
+          body: new URLSearchParams({ action: 'start', band: band }) })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; },
+                                                  function () { return { ok: r.ok, j: {} }; }); })
+        .then(function (res) {
+          if (!res.ok) { document.getElementById('live-out').textContent =
+            'start failed: ' + (res.j.detail || 'error'); return; }
+          stopLivePolling(); livePoll(); liveTimer = setInterval(livePoll, 1000);
+        }).catch(function (e) { document.getElementById('live-out').textContent = 'start failed: ' + e; });
+    });
+    var lx = document.getElementById('live-stop');
+    if (lx) lx.addEventListener('click', function () {
+      fetch('/api/spectrum/live', { method: 'POST', body: new URLSearchParams({ action: 'stop' }) })
+        .then(function () { stopLivePolling();
+          document.getElementById('live-out').textContent = 'stopped'; });
+    });
 
     // --- live feed ---
     function renderFeed(events) {

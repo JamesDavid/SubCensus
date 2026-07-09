@@ -21,11 +21,14 @@ from pathlib import Path as _Path
 from ..db import Database
 import subprocess
 
+from ..live_sweep import LiveSweeper
 from ..occupancy_pass import (
+    SWEEP_PRESETS,
     read_occupancy_csv,
     read_spectrum_csv,
     read_watchlist_rows,
     reset_place,
+    resolve_range,
     rtl_power_available,
     run_pass_to_place,
     set_pin,
@@ -87,6 +90,7 @@ def create_app(db_path: str, place: str | None = None, places_dir: str | None = 
     app.state.db_path = db_path
     app.state.place = place
     app.state.places_dir = places_dir
+    app.state.live = LiveSweeper()  # continuous live-spectrum streamer (Pi §7)
 
     def get_db() -> Database:
         return Database(app.state.db_path)
@@ -241,10 +245,34 @@ def create_app(db_path: str, place: str | None = None, places_dir: str | None = 
         set_pin(d, freq_hz, source=f"user-{action}")
         return JSONResponse({"ok": True, "freq_hz": freq_hz, "action": action})
 
+    @app.get("/api/spectrum/live")
+    def api_spectrum_live():
+        """Live waterfall data (Pi §7): the in-memory ring of the most recent streaming sweeps.
+        {running, range, error, freqs, sweeps[]}. Poll this ~1/s while live streaming is on."""
+        return app.state.live.snapshot()
+
+    @app.post("/api/spectrum/live")
+    def api_spectrum_live_ctl(action: str = Form(...), band: str = Form(default="ism")):
+        """Start/stop the continuous live sweep on the dongle (Pi §7). `band` is a preset
+        (ism/315/433/915/full) or a raw low:high:bin. Uses the dongle exclusively — stop the
+        collector first (one radio)."""
+        live = app.state.live
+        if action == "stop":
+            live.stop()
+            return {"running": False}
+        if action != "start":
+            raise HTTPException(status_code=400, detail="action must be start|stop")
+        try:
+            rng = live.start(band)
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=503, detail=str(e))
+        return {"running": True, "range": rng, "presets": list(SWEEP_PRESETS)}
+
     @app.post("/api/recon/run")
     def api_run(
         place: str = Form(default=""),
         mode: str = Form(default="accumulate"),
+        band: str = Form(default="ism"),
         duration_s: int = Form(default=20),
         rtl_power_csv: str = Form(default=""),
     ):
@@ -266,7 +294,9 @@ def create_app(db_path: str, place: str | None = None, places_dir: str | None = 
                     detail="rtl_power not installed — run pi/install.sh (installs rtl-sdr).",
                 )
             try:
-                sweep_live_to_csv(d / "recon_sweep.csv", duration_s=duration_s)
+                sweep_live_to_csv(
+                    d / "recon_sweep.csv", freq_range=resolve_range(band), duration_s=duration_s
+                )
             except FileNotFoundError as e:
                 raise HTTPException(status_code=503, detail=str(e))
             except subprocess.TimeoutExpired:

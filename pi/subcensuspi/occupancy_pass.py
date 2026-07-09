@@ -56,47 +56,70 @@ class Pin:
 
 # --- rtl_power parsing ---
 
-def parse_rtl_power_csv(path: str | Path):
-    """Yield (freq_hz, dbm, ts_iso, band_low) samples from an rtl_power CSV (bins expanded).
-    band_low identifies the sweep band, so the noise floor can be estimated per band (§3.3).
+def parse_rtl_power_line(line: str):
+    """Parse ONE rtl_power CSV line -> (ts_iso, band_low, [(center_hz, dbm), ...]) or None.
 
-    rtl_power line: date, time, Hz_low, Hz_high, Hz_step, samples, dbm, dbm, ...  — where the
-    step column is often a FLOAT (e.g. "1000000.00") and the number of dBm values, not the step,
-    defines how many bins the [low,high) span is split into. We derive the bin width from the
-    actual dBm count so it's robust across rtl_power builds."""
+    rtl_power line: date, time, Hz_low, Hz_high, Hz_step, samples, dbm, dbm, ...  — the step
+    column is often a FLOAT ("1000000.00") and the *count* of dBm values (not the step) defines
+    how many bins the [low,high) span is split into, so we derive bin width from the dBm count
+    (robust across rtl_power builds). Shared by the file parser and the live streamer."""
+    line = line.strip()
+    if not line or line.startswith("#"):
+        return None
+    parts = [p.strip() for p in line.split(",")]
+    if len(parts) < 7:
+        return None
+    try:
+        low, high = float(parts[2]), float(parts[3])
+    except ValueError:
+        return None
+    dbms = parts[6:]  # cols 4 (step) + 5 (samples) are ignored; the rest are dBm bins
+    n = len(dbms)
+    if n == 0 or high <= low:
+        return None
+    ts = f"{parts[0]}T{parts[1]}"
+    bin_w = (high - low) / n
+    out = []
+    for i, d in enumerate(dbms):
+        try:
+            out.append((int(low + bin_w * (i + 0.5)), float(d)))
+        except ValueError:
+            continue
+    return ts, int(low), out
+
+
+def parse_rtl_power_csv(path: str | Path):
+    """Yield (freq_hz, dbm, ts_iso, band_low) samples from an rtl_power CSV (bins expanded)."""
     with Path(path).open("r", encoding="utf-8") as fh:
         for line in fh:
-            line = line.strip()
-            if not line or line.startswith("#"):
+            parsed = parse_rtl_power_line(line)
+            if parsed is None:
                 continue
-            parts = [p.strip() for p in line.split(",")]
-            if len(parts) < 7:
-                continue
-            date, tm = parts[0], parts[1]
-            try:
-                low, high = float(parts[2]), float(parts[3])
-            except ValueError:
-                continue
-            dbms = parts[6:]  # cols 4 (step) + 5 (samples) are ignored; the rest are dBm bins
-            n = len(dbms)
-            if n == 0 or high <= low:
-                continue
-            ts = f"{date}T{tm}"
-            band_low = int(low)
-            bin_w = (high - low) / n
-            for i in range(n):
-                try:
-                    dbm = float(dbms[i])
-                except ValueError:
-                    continue
-                center = int(low + bin_w * (i + 0.5))
+            ts, band_low, pairs = parsed
+            for center, dbm in pairs:
                 yield center, dbm, ts, band_low
 
 
 # --- live rtl_power sweep (real hardware) ---
 
-# CC1101-comparable ISM span; rtl_power sweeps it by retuning across the range.
-DEFAULT_SWEEP_RANGE = "300M:928M:1M"
+# Named band presets (freq_low:freq_high:bin). Default focuses on the busy 315/390/418/433 ISM
+# cluster at fine (25 kHz) resolution — a NARROW range revisits fast (revisit ~ range/hop-rate),
+# which is what actually catches short, periodic ISM bursts. A full 300-928 sweep at 1 MHz can't.
+SWEEP_PRESETS = {
+    "ism": "300M:470M:25k",   # 315 + 390 + 418 + 433 cluster (US ISM sweet spot)
+    "315": "313M:318M:5k",    # tight around 315 MHz
+    "433": "430M:436M:5k",    # tight around 433.92 MHz
+    "915": "902M:928M:25k",   # 915 MHz ISM band
+    "full": "300M:928M:250k", # whole CC1101 span (coarse, "what do I even have")
+}
+DEFAULT_SWEEP_RANGE = SWEEP_PRESETS["ism"]
+
+
+def resolve_range(band_or_range: str | None) -> str:
+    """A preset name ('ism'/'315'/'433'/'915'/'full') or a raw 'low:high:bin' string -> range."""
+    if not band_or_range:
+        return DEFAULT_SWEEP_RANGE
+    return SWEEP_PRESETS.get(band_or_range, band_or_range)
 
 
 def rtl_power_available() -> bool:
