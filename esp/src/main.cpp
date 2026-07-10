@@ -798,10 +798,13 @@ static void sweep_task(void* arg) {
     static int32_t freqs[64];
     size_t nf = load_watchlist_freqs(freqs, 64);
     if(nf == 0) {
-        // no watchlist -> fall back to the preset list (US ISM), never blocked (System §9)
-        static int32_t preset[] = {315000000, 390000000, 433920000, 915000000};
-        for(size_t i = 0; i < 4; i++) freqs[i] = preset[i];
-        nf = 4;
+        // no watchlist -> fall back to the preset list (US ISM + security bands), never blocked
+        // (System §9). 319.5 = GE/Interlogix/2GIG alarm sensors; 345 = Honeywell 5800-series.
+        static int32_t preset[] = {315000000, 319500000, 345000000, 390000000,
+                                   433920000, 915000000};
+        size_t np = sizeof(preset) / sizeof(preset[0]);
+        for(size_t i = 0; i < np; i++) freqs[i] = preset[i];
+        nf = np;
     }
     size_t idx = 0;
     while(g_camp_running) { // reuse the running flag; one monitor at a time

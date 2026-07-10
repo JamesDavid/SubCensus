@@ -93,3 +93,18 @@ def test_version_endpoint(tmp_path):
 def test_update_requires_repo_dir(tmp_path):
     client = TestClient(create_app(str(tmp_path / "c.db"), admin_api=True))  # no repo_dir
     assert client.post("/api/admin/update").status_code == 400
+
+
+def test_hop_freqs_edits_config(tmp_path):
+    import yaml
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(yaml.safe_dump({"dongles": [{"freqs": ["433.92M"]}], "place": "home"}))
+    client = TestClient(create_app(str(tmp_path / "c.db"), admin_api=True, config_path=str(cfg)))
+    r = client.post("/api/admin/hop-freqs", data={"freqs": "433.92M,315M,319.5M,345M"})
+    assert r.status_code == 200 and r.json()["freqs"] == ["433.92M", "315M", "319.5M", "345M"]
+    # persisted to the collector config the decode subprocess reads
+    saved = yaml.safe_load(cfg.read_text())
+    assert saved["dongles"][0]["freqs"] == ["433.92M", "315M", "319.5M", "345M"]
+    # gated + validated
+    assert TestClient(create_app(str(tmp_path / "c2.db"))).post(
+        "/api/admin/hop-freqs", data={"freqs": "x"}).status_code == 403

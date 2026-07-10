@@ -1,7 +1,8 @@
 # SubCensusPi config (Pi §8). Copy to config.yaml and edit for your host.
 dongles:
   - serial: ""              # rtl_433 -d :<serial>; empty = first/default dongle
-    freqs: [433.92M, 915M, 315M]
+    freqs: [433.92M, 915M, 315M, 319.5M, 345M]  # +319.5 (GE/Interlogix/2GIG alarm sensors),
+    #                                              +345 (Honeywell 5800-series security)
     gain: auto
     ppm: 0
     hop_seconds: 30         # single-dongle hop across the freqs above

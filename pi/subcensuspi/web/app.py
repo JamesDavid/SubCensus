@@ -820,6 +820,35 @@ def create_app(
         finally:
             db.close()
 
+    @app.post("/api/admin/hop-freqs")
+    def api_admin_hop_freqs(freqs: str = Form(...)):
+        """Set the census hop frequencies on every dongle in config.yaml (comma-separated, e.g.
+        '433.92M,915M,315M,319.5M,345M') and restart decode so it takes effect. Lets the census
+        cover new device families (security bands, etc.) without hand-editing YAML. GATED."""
+        _require_admin()
+        if not config_path or not _Path(config_path).is_file():
+            raise HTTPException(status_code=400, detail="no SUBCENSUSPI_CONFIG to edit")
+        wanted = [f.strip() for f in freqs.split(",") if f.strip()]
+        if not wanted:
+            raise HTTPException(status_code=400, detail="no freqs given")
+        import yaml  # local: only this endpoint needs it
+        try:
+            data = yaml.safe_load(_Path(config_path).read_text(encoding="utf-8")) or {}
+            dongles = data.get("dongles") or [{}]
+            for d in dongles:
+                d["freqs"] = wanted
+            data["dongles"] = dongles
+            _Path(config_path).write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+        except (OSError, yaml.YAMLError) as e:
+            raise HTTPException(status_code=500, detail=f"config write failed: {e}")
+        # re-apply decode so the collector re-reads the new hop set
+        try:
+            if app.state.radio.status()["mode"] in ("decode", "camp"):
+                app.state.radio.set_mode("decode")
+        except Exception:  # pragma: no cover
+            pass
+        return {"ok": True, "freqs": wanted}
+
     @app.get("/api/admin/version")
     def api_admin_version():
         """Deployed git commit + brain size — so a deploy can be verified over HTTP. GATED."""

@@ -17,7 +17,8 @@ static const uint32_t RECON_KNOWN[] = {
     310000000,
     315000000,
     318000000,
-    345000000,
+    319500000,  /* GE/Interlogix/2GIG security sensors (door/window/motion) — US alarm band */
+    345000000,  /* Honeywell 5800-series security sensors */
     390000000,
     418000000,
     433420000,
