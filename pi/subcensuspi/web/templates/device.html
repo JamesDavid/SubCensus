@@ -55,8 +55,9 @@
       </div>
     </section>
 
-    <!-- Candidate fingerprints for the latest burst (System §6 multi-candidate). With all_protocols
-         (-G 4) a single signal can match several decoders; they're ranked by the confidence gate. -->
+    <!-- Candidate fingerprints for the latest burst (System §6 multi-candidate): the decoders that
+         co-fired on the same time+freq live, ranked by the confidence gate. For an exhaustive
+         test of one specific burst, use Captured bursts below (replay through every decoder). -->
     <section>
       <h2>Candidate fingerprints <span class="muted">what else this signal matches · ranked by confidence</span></h2>
       {% if candidates|length > 1 %}
@@ -77,11 +78,74 @@
         </tbody>
       </table>
       {% else %}
-      <div class="muted">Only one decoder matched this burst — no competing fingerprints to compare.
-        Enable <code>all_protocols</code> in the config (rtl_433 <code>-G 4</code>) so future bursts
-        are tested against <em>every</em> decoder and their candidates show up here.</div>
+      <div class="muted">Only one decoder claimed this burst live. To force-test a specific burst
+        against <em>every</em> decoder, use <strong>Captured bursts</strong> below — each saved
+        sample has a "match against all decoders" button.</div>
       {% endif %}
     </section>
+
+    <!-- Captured bursts: the raw .cu8 samples the collector saved near this device's receptions
+         (rtl_433 -S all). THE evidence trail — replay any burst through every decoder on demand
+         (System §6 multi-candidate), no dongle needed, even while decode is running. -->
+    <section>
+      <h2>Captured bursts <span class="muted">raw RF samples near this device's receptions — re-testable against every decoder</span></h2>
+      {% if samples %}
+      <table>
+        <thead><tr><th>Captured</th><th>Size</th><th></th></tr></thead>
+        <tbody>
+        {% for s in samples %}
+          <tr>
+            <td class="muted">{{ s.mtime }}</td>
+            <td class="muted">{{ (s.bytes / 1024) | round(0) | int }} KB</td>
+            <td><button class="redecode" data-file="{{ s.file }}">match against all decoders</button></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <div id="redecode-out"></div>
+      {% else %}
+      <div class="muted">No raw captures near these receptions yet. The collector saves every
+        detected burst as a raw sample going forward (rolling window) — new receptions of this
+        device will have their bursts here, each replayable through every decoder.</div>
+      {% endif %}
+    </section>
+    <script>
+    // Replay a captured burst through EVERY decoder and render the ranked candidate list —
+    // "this signal matches these N things", catalog hits marked, junk scored low (System §6).
+    document.querySelectorAll('.redecode').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const out = document.getElementById('redecode-out');
+        btn.disabled = true; btn.textContent = 'matching…';
+        fetch('/api/sample/redecode', { method: 'POST',
+            body: new URLSearchParams({ file: btn.dataset.file }) })
+          .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; },
+                                                    function () { return { ok: false, j: {} }; }); })
+          .then(function (res) {
+            btn.disabled = false; btn.textContent = 'match against all decoders';
+            if (!res.ok) { out.innerHTML = '<div class="why">re-decode failed: ' +
+              (res.j.detail || 'error') + '</div>'; return; }
+            const cands = res.j.candidates || [];
+            if (!cands.length) { out.innerHTML =
+              '<div class="muted" style="margin-top:8px">No decoder claims this burst — ' +
+              'genuinely unknown signal (or noise trigger).</div>'; return; }
+            out.innerHTML = '<div class="muted" style="margin:8px 0 4px">' + res.j.file +
+              ' matches ' + cands.length + ' decoder(s):</div>' +
+              '<table><thead><tr><th>Model</th><th>ID/Ch</th><th>Decoded</th><th>Frames</th>' +
+              '<th>Conf.</th><th>In catalog?</th><th>Notes</th></tr></thead><tbody>' +
+              cands.map(function (c) {
+                function esc(s){return String(s==null?'':s).replace(/[&<>]/g,function(ch){
+                  return {'&':'&amp;','<':'&lt;','>':'&gt;'}[ch];});}
+                return '<tr><td>' + esc(c.model) + '</td><td>' + esc(c.dev_id) +
+                  (c.channel ? '/' + esc(c.channel) : '') + '</td><td class="reading">' +
+                  esc(c.reading || '—') + '</td><td>' + c.frames + '</td>' +
+                  '<td class="conf ' + (c.plausible ? 'ok' : 'bad') + '">' +
+                  c.confidence.toFixed(2) + '</td><td>' + (c.in_catalog ? 'yes' : '—') +
+                  '</td><td class="muted">' + esc((c.reasons || []).join(' · ')) + '</td></tr>';
+              }).join('') + '</tbody></table>';
+          });
+      });
+    });
+    </script>
 
     <!-- Full reception log: every communication we've heard from this device (Pi §7). The RAW BITS
          column is the demodulated payload independent of the decode — the evidence you re-interpret
@@ -89,10 +153,10 @@
     <section>
       <h2>Communications <span class="muted">{{ events|length }} most-recent receptions · raw bits = the recoverable payload</span></h2>
       {% if not any_bits %}
-      <div class="why">No raw bits retained for these receptions — rtl_433 emitted only decoded
-        values. New captures keep them (baseline now runs <code>-M bits</code>; turn on
-        <code>all_protocols</code> for full candidate coverage), so a wrong fingerprint stays
-        recoverable going forward.</div>
+      <div class="why">No raw bits in these rows — only some decoders expose them
+        (<code>-M bits</code> covers code outputs, not everything). The reliable evidence is the
+        <strong>Captured bursts</strong> above: the raw RF sample of each burst, replayable
+        through every decoder.</div>
       {% endif %}
       <div class="scroll">
       <table>

@@ -36,9 +36,11 @@ class WebConfig:
 class Config:
     dongles: list[DongleConfig] = field(default_factory=lambda: [DongleConfig()])
     capture_unknowns: bool = False
-    all_protocols: bool = True   # DEFAULT ON: enable EVERY rtl_433 decoder (-G 4) so each burst is
-    #                              matched against all ~200 fingerprints -> candidate list per signal
-    #                              (§6). Noisier by design; the confidence gate hides the junk.
+    capture_samples: bool = True  # DEFAULT ON: save every detected burst as a raw .cu8 sample
+    #                               (rtl_433 -S all, in the place iq dir) so any burst can be
+    #                               re-matched against every decoder later (§6). Rolling window —
+    #                               pruned to max_samples_gb, never grows unbounded.
+    max_samples_gb: float = 2.0
     prioritize_watchlist: bool = False  # opt-in: reorder hop/dongle attention by watchlist (§3)
     place: str = "home"
     places_dir: str = "/var/lib/subcensuspi/places"
@@ -80,7 +82,8 @@ class Config:
         return cls(
             dongles=dongles,
             capture_unknowns=bool(data.get("capture_unknowns", False)),
-            all_protocols=bool(data.get("all_protocols", True)),
+            capture_samples=bool(data.get("capture_samples", True)),
+            max_samples_gb=float(data.get("max_samples_gb", 2.0)),
             prioritize_watchlist=bool(data.get("prioritize_watchlist", False)),
             place=str(data.get("place", "home")),
             places_dir=str(data.get("places_dir", "/var/lib/subcensuspi/places")),

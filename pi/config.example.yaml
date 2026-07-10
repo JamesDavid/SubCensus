@@ -6,9 +6,10 @@ dongles:
     ppm: 0
     hop_seconds: 30         # single-dongle hop across the freqs above
 capture_unknowns: false     # save IQ/pulse for undecoded bursts (M4; disk-guarded)
-all_protocols: true         # DEFAULT ON: enable EVERY rtl_433 decoder (-G 4) so each burst is
-                            # matched against all ~200 fingerprints -> candidate list per signal
-                            # (System §6). Noisier; the dashboard confidence gate hides the junk.
+capture_samples: true       # DEFAULT ON: save every detected burst as a raw .cu8 in the place iq
+                            # dir (rtl_433 -S all) so any burst can be re-matched against EVERY
+                            # decoder later from the device page (System §6). Rolling window.
+max_samples_gb: 2           # prune oldest samples past this cap (never fills the SD card)
 prioritize_watchlist: false # opt-in: reorder hop/dongle attention by the place watchlist (§3)
 place: home                 # active Place profile (§9a); stamps all records
 places_dir: /var/lib/subcensuspi/places

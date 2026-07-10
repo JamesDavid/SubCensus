@@ -292,7 +292,7 @@ class Database:
         self, place: str | None, freq_hz: int, ts: str, bin_hz: int = 60000
     ) -> list[sqlite3.Row]:
         """All decodes that landed on the SAME burst — same timestamp, within `bin_hz` of `freq_hz`
-        (System §6 multi-candidate). With rtl_433's full decoder set (-G 4 / all_protocols) one RF
+        (System §6 multi-candidate). When several decoders co-fire on a burst, one RF
         burst can match several protocols; each is a separate event row sharing the reception time
         and frequency. Grouping them back together = the candidate fingerprints for that signal,
         which the detail page ranks by the confidence gate. Joined to devices for model/id.

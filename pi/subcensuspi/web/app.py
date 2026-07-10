@@ -26,6 +26,7 @@ from ..live_sweep import LiveSweeper
 from ..plausibility import assess
 from ..radio import RadioManager
 from ..readings import humanize_reading, raw_bits
+from ..redecode import redecode_file, rtl433_available
 from ..occupancy_pass import (
     SWEEP_PRESETS,
     read_occupancy_csv,
@@ -125,6 +126,16 @@ def create_app(
             return None
         return _Path(app.state.places_dir) / pl
 
+    def samples_dir(p: str | None) -> _Path | None:
+        """Where the collector's -S capture drops raw .cu8 bursts (the place iq dir, §6/§9a)."""
+        d = place_dir(p)
+        return (d / "iq") if d is not None else None
+
+    def _sample_info(f: _Path) -> dict:
+        st = f.stat()
+        return {"file": f.name, "bytes": st.st_size,
+                "mtime": datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds")}
+
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request, place: str | None = None, show_all: bool = False):
         db = get_db()
@@ -218,6 +229,43 @@ def create_app(
             db.close()
         return {"device_id": device_id, "buckets": counts, "sparkline": sparkline(counts)}
 
+    # --- Captured bursts: raw .cu8 samples, re-testable against every decoder (System §6) ---
+
+    @app.get("/api/samples")
+    def api_samples(place: str | None = None, limit: int = 50):
+        """The captured raw bursts (newest first) — each is a replayable .cu8 the collector saved
+        via -S all. These are the received bits; the decode was only a guess about them."""
+        d = samples_dir(place)
+        if d is None or not d.is_dir():
+            return []
+        files = sorted(d.glob("*.cu8"), key=lambda f: f.stat().st_mtime, reverse=True)
+        return [_sample_info(f) for f in files[:limit]]
+
+    @app.post("/api/sample/redecode")
+    def api_sample_redecode(file: str = Form(...), place: str = Form(default="")):
+        """Replay one captured burst through EVERY decoder and return the ranked candidate list
+        (System §6): "this signal matches these N things" — catalog hits marked, junk scored low.
+        File replay never touches the dongle, so this works while live decode owns the radio."""
+        d = samples_dir(place or None)
+        if d is None:
+            raise HTTPException(status_code=400, detail="no places_dir configured")
+        path = d / _Path(file).name  # basename only — no path traversal
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="sample not found")
+        if not rtl433_available():
+            raise HTTPException(status_code=503,
+                                detail="rtl_433 not installed — run pi/install.sh")
+        db = get_db()
+        try:
+            candidates = redecode_file(path, db=db)
+        except subprocess.TimeoutExpired:
+            raise HTTPException(status_code=504, detail="rtl_433 replay timed out")
+        except RuntimeError as e:
+            raise HTTPException(status_code=503, detail=str(e))
+        finally:
+            db.close()
+        return {"file": path.name, "candidates": candidates}
+
     def _rank_candidates(rows) -> list[dict]:
         """Rank co-burst decodes by the confidence gate (System §6) — the candidate fingerprints
         for one signal, best first."""
@@ -265,6 +313,18 @@ def create_app(
             e["reading"] = humanize_reading(e.get("raw_json"))
             e["bits"] = raw_bits(e.get("raw_json"))
         any_bits = any(e["bits"] for e in events)
+        # Captured raw bursts near this device's receptions (±3 s): the replayable evidence for
+        # "match this signal against every decoder" (System §6). Empty until -S capture has run.
+        samples = []
+        sd = samples_dir(device.get("place"))
+        if sd is not None and sd.is_dir():
+            ev_epochs = [t.timestamp() for t in
+                         (_parse_ts(e.get("ts") or "") for e in events[:100]) if t is not None]
+            for f in sorted(sd.glob("*.cu8"), key=lambda f: f.stat().st_mtime, reverse=True)[:500]:
+                if any(abs(f.stat().st_mtime - t) <= 3 for t in ev_epochs):
+                    samples.append(_sample_info(f))
+                if len(samples) >= 20:
+                    break
         return TEMPLATES.TemplateResponse(
             request=request,
             name="device.html",
@@ -274,6 +334,7 @@ def create_app(
                 "candidates": candidates,
                 "assessment": assessment.as_dict(),
                 "any_bits": any_bits,
+                "samples": samples,
                 "classes": class_ids(),
             },
         )
@@ -418,8 +479,13 @@ def create_app(
         the dongle exclusively — starting it stops decode; stopping it leaves the radio off."""
         radio = app.state.radio
         if action == "stop":
-            radio.set_mode("off")
-            return {"running": False}
+            # Resume whatever ran before the sweep (usually decode) — a spectrum look must not
+            # silently leave the 24/7 census off (the mode is persisted across reboots).
+            try:
+                st = radio.set_mode(radio.after_spectrum_mode())
+            except Exception:
+                st = radio.set_mode("off")
+            return {"running": False, "mode": st["mode"]}
         if action != "start":
             raise HTTPException(status_code=400, detail="action must be start|stop")
         try:

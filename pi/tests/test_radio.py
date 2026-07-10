@@ -70,6 +70,22 @@ def test_spectrum_starts_and_is_exclusive():
     assert st["mode"] == "off" and live.running is False
 
 
+def test_spectrum_stop_resumes_prior_mode():
+    """A spectrum look is a detour: after it, the radio returns to whatever ran before (usually
+    the 24/7 census), instead of persisting 'off' and silently killing decode across reboots."""
+    r = RadioManager(FakeLive())
+    r._mode = "decode"  # pretend the census was running (no subprocess needed for bookkeeping)
+    r.set_mode("spectrum", band="433")
+    assert r.after_spectrum_mode() == "decode"
+    # from off, a spectrum look returns to off
+    r2 = RadioManager(FakeLive())
+    r2.set_mode("spectrum")
+    assert r2.after_spectrum_mode() == "off"
+    # explicitly picking a non-spectrum mode clears the detour memory
+    r.set_mode("off")
+    assert r.after_spectrum_mode() == "off"
+
+
 def test_spectrum_unavailable_propagates_filenotfound():
     r = RadioManager(FakeLive(available=False))
     try:

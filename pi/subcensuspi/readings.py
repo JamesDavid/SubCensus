@@ -98,7 +98,8 @@ _RAW_BIT_FIELDS = ("data", "code", "codes", "rows", "bits", "mic_data")
 def raw_bits(raw_json: str | None) -> str:
     """The raw demodulated payload of a reception (hex/bit string), independent of how it was
     decoded — the evidence you'd re-interpret if the fingerprint guess was wrong. Empty if rtl_433
-    didn't emit any raw field (enable ``-M bits`` / all_protocols to keep them)."""
+    didn't emit any raw field (only some decoders expose one — the .cu8 samples are the reliable
+    evidence trail)."""
     if not raw_json:
         return ""
     try:

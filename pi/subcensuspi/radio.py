@@ -46,6 +46,7 @@ class RadioManager:
         self._tail: deque = deque(maxlen=25)  # last decode stdout/stderr lines (for status)
         self._tail_thread: threading.Thread | None = None
         self._last_error: str | None = None
+        self._mode_before_spectrum: str = "off"  # what to resume when a spectrum look ends
 
     # --- capability probes ---
 
@@ -66,6 +67,12 @@ class RadioManager:
         if mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}")
         with self._lock:
+            # A spectrum look is usually a detour from the 24/7 census — remember what was
+            # running so stopping the waterfall can resume it instead of leaving the radio off.
+            if mode == "spectrum" and self._mode != "spectrum":
+                self._mode_before_spectrum = self._mode
+            elif mode != "spectrum":
+                self._mode_before_spectrum = "off"
             # Always tear the radio down to idle before bringing the new mode up.
             self._stop_decode()
             self.live.stop()
@@ -129,6 +136,13 @@ class RadioManager:
                     proc.kill()
                 except Exception:
                     pass
+
+    def after_spectrum_mode(self) -> str:
+        """The mode to return to when a spectrum look ends (Pi §3): whatever ran before the sweep
+        — so stopping the waterfall resumes the 24/7 census rather than silently leaving the
+        radio (persistently) off."""
+        m = self._mode_before_spectrum
+        return m if m in ("off", "decode") else "off"
 
     # --- introspection ---
 

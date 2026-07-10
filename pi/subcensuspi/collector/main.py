@@ -18,7 +18,14 @@ from ..occupancy_pass import read_watchlist_rows
 from .collector import Collector
 from .multi import SourceStream, run_multi
 from .priority import prioritize_dongles
-from .rtl433 import replay_cu8, replay_file, rtl433_available, stream_live, supervise_stream
+from .rtl433 import (
+    prune_samples,
+    replay_cu8,
+    replay_file,
+    rtl433_available,
+    stream_live,
+    supervise_stream,
+)
 
 log = logging.getLogger("subcensuspi.collector.main")
 
@@ -98,9 +105,23 @@ def _run_live(cfg: Config, collector: Collector) -> None:  # pragma: no cover - 
         if wl:
             dongles = prioritize_dongles(dongles, wl)
             log.info("SC event=watchlist_priority applied dongles=%d", len(dongles))
+    # Raw-burst evidence trail (§6): every detected transmission saved as a .cu8 in the place iq
+    # dir, so any burst can be re-matched against every decoder later. Rolling window — pruned at
+    # launch (stream_live) and every 10 min by the janitor, capped at cfg.max_samples_gb.
+    capture_dir = cfg.place_iq_dir() if cfg.capture_samples else None
+    if capture_dir:
+        import threading
+        import time as _time
+
+        def _janitor() -> None:  # pragma: no cover - timing loop
+            while True:
+                _time.sleep(600)
+                prune_samples(capture_dir, max_gb=cfg.max_samples_gb)
+
+        threading.Thread(target=_janitor, daemon=True).start()
     streams = [
         SourceStream(
-            supervise_stream(lambda d=d: stream_live(d, all_protocols=cfg.all_protocols)),
+            supervise_stream(lambda d=d: stream_live(d, capture_dir=capture_dir)),
             d.serial or ",".join(d.freqs),
         )
         for d in dongles
