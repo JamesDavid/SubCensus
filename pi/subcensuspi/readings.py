@@ -90,6 +90,30 @@ def reading_fields(raw_json: str | None) -> list[tuple[str, str]]:
     return out
 
 
+# rtl_433 raw-payload fields, in preference order. `-M bits` / raw decoders expose the demodulated
+# bits under one of these; keeping them means a wrong fingerprint stays recoverable (System §7b).
+_RAW_BIT_FIELDS = ("data", "code", "codes", "rows", "bits", "mic_data")
+
+
+def raw_bits(raw_json: str | None) -> str:
+    """The raw demodulated payload of a reception (hex/bit string), independent of how it was
+    decoded — the evidence you'd re-interpret if the fingerprint guess was wrong. Empty if rtl_433
+    didn't emit any raw field (enable ``-M bits`` / all_protocols to keep them)."""
+    if not raw_json:
+        return ""
+    try:
+        obj = json.loads(raw_json)
+    except (ValueError, TypeError):
+        return ""
+    if not isinstance(obj, dict):
+        return ""
+    for k in _RAW_BIT_FIELDS:
+        v = obj.get(k)
+        if v:
+            return " ".join(str(x) for x in v) if isinstance(v, list) else str(v)
+    return ""
+
+
 def humanize_reading(raw_json: str | None) -> str:
     """One-line human-readable summary of a reception's decoded payload, e.g.
     ``temp 21.3°C · humidity 45%`` or ``power 812 W · battery OK``. Empty string when there is no

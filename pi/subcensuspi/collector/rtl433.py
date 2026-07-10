@@ -86,6 +86,10 @@ def build_argv(
     argv = [
         "rtl_433", "-F", "json",
         "-M", "time:iso:tz", "-M", "level", "-M", "protocol", "-M", "stats",
+        # -M bits keeps the RAW demodulated payload on every row, even for decoded frames. The
+        # decode is only a *guess* at the right fingerprint; retaining the bits means a wrong guess
+        # stays recoverable (re-map fields / re-interpret later, System §7b) instead of thrown away.
+        "-M", "bits",
     ]
     if all_protocols:
         argv += ["-G", "4"]  # enable all decoders -> all candidate matches per burst

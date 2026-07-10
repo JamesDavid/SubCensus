@@ -3,7 +3,19 @@ line shown in the Devices "Latest reading" column and the Live feed. Presentatio
 keys (identity/RF/timing) are dropped, measurement keys are labeled + unit-suffixed, battery is
 read as OK/LOW, and unknown fields still show via a generic fallback."""
 
-from subcensuspi.readings import humanize_reading, reading_fields
+from subcensuspi.readings import humanize_reading, raw_bits, reading_fields
+
+
+def test_raw_bits_extracted_when_present():
+    # rtl_433 raw payload lives under data/code/rows/... — keep it independent of the decode
+    assert raw_bits('{"model":"RawSensor","data":"a50014b1","temperature_C":20}') == "a50014b1"
+    assert raw_bits('{"model":"X","rows":["0101","1100"]}') == "0101 1100"
+
+
+def test_raw_bits_empty_when_only_decoded_values():
+    # a decoded sensor with no raw field retained -> nothing to re-interpret (the gap -M bits fixes)
+    assert raw_bits('{"model":"Acurite-Tower","temperature_C":21,"humidity":45}') == ""
+    assert raw_bits(None) == "" and raw_bits("not json") == ""
 
 
 def test_temp_humidity():

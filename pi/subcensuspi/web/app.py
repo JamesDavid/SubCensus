@@ -25,7 +25,7 @@ import subprocess
 from ..live_sweep import LiveSweeper
 from ..plausibility import assess
 from ..radio import RadioManager
-from ..readings import humanize_reading
+from ..readings import humanize_reading, raw_bits
 from ..occupancy_pass import (
     SWEEP_PRESETS,
     read_occupancy_csv,
@@ -256,8 +256,10 @@ def create_app(
             db.close()
         assessment = assess((latest or {}).get("raw_json") if latest else None,
                             model=device.get("model") or "", count=device.get("count") or 0)
-        for e in events:  # humanize each reception's decoded payload for the log
+        for e in events:  # humanize each reception + expose its raw bits (the recoverable evidence)
             e["reading"] = humanize_reading(e.get("raw_json"))
+            e["bits"] = raw_bits(e.get("raw_json"))
+        any_bits = any(e["bits"] for e in events)
         return TEMPLATES.TemplateResponse(
             request=request,
             name="device.html",
@@ -266,6 +268,7 @@ def create_app(
                 "events": events,
                 "candidates": candidates,
                 "assessment": assessment.as_dict(),
+                "any_bits": any_bits,
                 "classes": class_ids(),
             },
         )

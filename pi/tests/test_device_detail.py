@@ -18,6 +18,12 @@ def test_all_protocols_flag_in_argv():
     assert argv[argv.index("-G") + 1] == "4"  # -G 4 enables EVERY decoder (all candidates)
 
 
+def test_baseline_keeps_raw_bits():
+    # -M bits retains the raw demodulated payload on every reception (recoverable if mis-decoded)
+    argv = build_argv(DongleConfig(freqs=["433.92M"]))
+    assert "bits" in argv and argv[argv.index("bits") - 1] == "-M"
+
+
 def test_config_parses_all_protocols():
     assert Config.from_dict({"all_protocols": True}).all_protocols is True
     assert Config.from_dict({}).all_protocols is False

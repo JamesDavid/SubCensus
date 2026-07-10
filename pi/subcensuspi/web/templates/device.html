@@ -83,22 +83,30 @@
       {% endif %}
     </section>
 
-    <!-- Full reception log: every communication we've heard from this device (Pi §7). -->
+    <!-- Full reception log: every communication we've heard from this device (Pi §7). The RAW BITS
+         column is the demodulated payload independent of the decode — the evidence you re-interpret
+         if the fingerprint guess was wrong (System §7b), instead of trusting the decoded values. -->
     <section>
-      <h2>Communications <span class="muted">{{ events|length }} most-recent receptions</span></h2>
+      <h2>Communications <span class="muted">{{ events|length }} most-recent receptions · raw bits = the recoverable payload</span></h2>
+      {% if not any_bits %}
+      <div class="why">No raw bits retained for these receptions — rtl_433 emitted only decoded
+        values. New captures keep them (baseline now runs <code>-M bits</code>; turn on
+        <code>all_protocols</code> for full candidate coverage), so a wrong fingerprint stays
+        recoverable going forward.</div>
+      {% endif %}
       <div class="scroll">
       <table>
-        <thead><tr><th>Time</th><th>Freq</th><th>Decoded reading</th><th>SNR</th><th>RSSI</th><th>Source</th><th>Raw</th></tr></thead>
+        <thead><tr><th>Time</th><th>Freq</th><th>Raw bits</th><th>Decoded reading</th><th>SNR</th><th>RSSI</th><th>Source</th></tr></thead>
         <tbody>
         {% for e in events %}
           <tr>
             <td class="muted">{{ e.ts or "—" }}</td>
             <td>{{ "%.2f"|format((e.freq_hz or 0) / 1e6) }}</td>
+            <td class="raw">{{ e.bits or "—" }}</td>
             <td class="reading">{{ e.reading or "—" }}</td>
             <td>{{ "%.1f"|format(e.snr) if e.snr is not none else "—" }}</td>
             <td>{{ "%.0f"|format(e.rssi) if e.rssi is not none else "—" }}</td>
             <td class="muted">{{ e.source or "—" }}</td>
-            <td class="raw">{{ e.raw_json or "" }}</td>
           </tr>
         {% else %}
           <tr><td colspan="7" class="muted">No receptions logged.</td></tr>
@@ -106,6 +114,13 @@
         </tbody>
       </table>
       </div>
+      {% if any_bits %}
+      <div class="muted" style="margin-top:8px">
+        Re-interpret these bits (differential field-map + checksum discovery, System §7b):
+        <a class="link" href="/api/device/{{ device.device_id }}/fieldmap">/api/device/{{ device.device_id }}/fieldmap</a>
+        — proposes which bits are id / value / checksum from how they change across receptions.
+      </div>
+      {% endif %}
     </section>
   </main>
 </body>
