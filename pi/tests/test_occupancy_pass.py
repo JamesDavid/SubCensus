@@ -204,3 +204,15 @@ def test_waterfall_renders_in_dashboard(sweep, tmp_path):
     assert 'id="waterfall"' in html          # heatmap+waterfall canvas present
     assert "drawWaterfall" in html
     assert "occupancy heatmap" in html.lower()
+
+
+def test_is_birdie_masks_28_8_harmonics():
+    from subcensuspi.occupancy_pass import is_birdie
+    # confirmed dongle spurs (28.8 MHz harmonics) -> masked
+    for mhz in (288.0, 316.8, 345.6, 374.4, 432.0, 460.8):
+        assert is_birdie(int(mhz * 1e6)), f"{mhz} should be a birdie"
+    assert is_birdie(374_240_000)  # ~150 kHz off the exact harmonic still caught
+    # real ISM device frequencies are NOT masked
+    for mhz in (315.0, 314.9, 433.92, 434.0, 345.0, 915.0, 868.3):
+        assert not is_birdie(int(mhz * 1e6)), f"{mhz} must not be masked"
+    assert not is_birdie(316_800_000, ref_hz=0)  # masking disabled

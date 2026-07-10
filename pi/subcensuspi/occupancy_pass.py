@@ -28,6 +28,26 @@ WATCHLIST_HEADER = ["freq_hz", "modulation", "threshold_dbm", "occupancy", "sour
 DEFAULT_MARGIN_DB = 12.0
 DEFAULT_OCC_CUTOFF = 0.10
 
+# RTL-SDR reference-oscillator birdies: the dongle's 28.8 MHz clock leaks internal spurs at every
+# harmonic (288.0, 316.8, 345.6, 374.4, 432.0, 460.8 MHz …). They read as strong, continuous,
+# undecodable "carriers" and otherwise dominate the occupancy heatmap as phantom hot bins. They
+# are dongle self-noise, not signals in the environment — mask them so recon shows real activity.
+# Confirmed empirically on the R820T here (every 28.8 MHz dead-zone lit up). Verified with the
+# antenna: unplug it and these persist (internal) while real signals vanish.
+SPUR_REF_HZ = 28_800_000
+SPUR_TOL_HZ = 200_000  # spur can sit ~150 kHz off the exact harmonic; 200 kHz clears it without
+#                        touching real ISM freqs (315.0 is 1.8 MHz from 316.8; 433.92 is ~2 MHz from 432)
+
+
+def is_birdie(freq_hz: float, ref_hz: int = SPUR_REF_HZ, tol_hz: int = SPUR_TOL_HZ,
+              max_harmonic: int = 40) -> bool:
+    """True if `freq_hz` is within `tol_hz` of an RTL-SDR reference-clock harmonic (a dongle spur,
+    not a real signal). ref_hz=0 disables masking (a dongle with a different/clean reference)."""
+    if not ref_hz or ref_hz <= 0:
+        return False
+    n = round(freq_hz / ref_hz)
+    return 1 <= n <= max_harmonic and abs(freq_hz - n * ref_hz) <= tol_hz
+
 # Sweep-history (waterfall, Pi §7 tier 2): downsample each sweep to a fixed freq-bucket grid and
 # keep a rolling window of the most recent sweeps so the dashboard can stack them over time.
 SPECTRUM_BUCKETS = 120

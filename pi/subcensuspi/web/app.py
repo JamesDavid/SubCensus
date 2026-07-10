@@ -31,6 +31,7 @@ from ..readings import humanize_reading, raw_bits
 from ..redecode import redecode_file, rtl433_available
 from ..occupancy_pass import (
     SWEEP_PRESETS,
+    is_birdie,
     read_occupancy_csv,
     read_spectrum_csv,
     read_watchlist_rows,
@@ -199,9 +200,12 @@ def create_app(
                 {"freq_hz": b.freq_hz, "noise_floor": b.noise_floor, "peak_rssi": b.peak_rssi,
                  "occupancy": b.occupancy, "crossings": b.crossings, "last_seen": b.last_seen}
                 for b in read_occupancy_csv(d / "occupancy.csv")
-                if (b.occupancy or 0) > 0 or (b.crossings or 0) > 0
+                if ((b.occupancy or 0) > 0 or (b.crossings or 0) > 0)
+                and not is_birdie(b.freq_hz)  # drop RTL-SDR self-noise spurs (28.8 MHz harmonics)
             ]
-            occupancy.sort(key=lambda r: r["occupancy"], reverse=True)
+            # rank by activity (crossings) first — a real device bursts on/off; a residual
+            # continuous carrier does not — then by occupancy.
+            occupancy.sort(key=lambda r: (r["crossings"], r["occupancy"]), reverse=True)
         has_activity = len(occupancy) > 0
         watchlist = read_watchlist_rows(d / "watchlist.csv") if d is not None else []
         # Waterfall: the downsampled rtl_power sweeps (freq x time, §7 tier 2). Don't paint the
@@ -458,13 +462,13 @@ def create_app(
         if d is None:
             return []
         bins = read_occupancy_csv(d / "occupancy.csv")
-        # ranked by occupancy desc (hot bins first)
+        # exclude RTL-SDR self-noise spurs (28.8 MHz harmonics); rank by activity then occupancy
         rows = [
             {"freq_hz": b.freq_hz, "noise_floor": b.noise_floor, "peak_rssi": b.peak_rssi,
              "occupancy": b.occupancy, "crossings": b.crossings, "last_seen": b.last_seen}
-            for b in bins
+            for b in bins if not is_birdie(b.freq_hz)
         ]
-        rows.sort(key=lambda r: r["occupancy"], reverse=True)
+        rows.sort(key=lambda r: (r["crossings"], r["occupancy"]), reverse=True)
         return rows
 
     @app.get("/api/watchlist")
