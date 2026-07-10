@@ -119,36 +119,21 @@
       <div id="feed"></div>
     </section>
 
-    <!-- Unknowns review queue (Pi §6, §7): pulse summary + play/inspect link; classify or discard. -->
+    <!-- Captured bursts (Pi §4/§6): every detected transmission is saved raw (-S all). This is the
+         review queue for UNDECODED signals — "Identify" replays a burst through every decoder, so
+         noise says so and a real device names itself. Supersedes the never-populated unknowns table. -->
     <section class="wide">
-      <h2>Unknowns <span class="muted">review queue</span></h2>
-      <table id="unknowns">
-        <thead><tr><th>Time</th><th>Band</th><th>Pulse summary</th><th>Sample</th><th>Class</th><th></th></tr></thead>
-        <tbody>
-        {% for u in unknowns %}
-          <tr data-id="{{ u.id }}">
-            <td class="muted">{{ u.ts or "—" }}</td>
-            <td>{{ "%.2f"|format((u.freq_hz or 0) / 1e6) }} MHz</td>
-            <td><code>{{ u.pulse_summary or "—" }}</code></td>
-            <td><a class="link inspect-link" data-id="{{ u.id }}">play / inspect</a></td>
-            <td>
-              <form class="unknown-form" data-id="{{ u.id }}">
-                <select name="device_class">
-                  <option value="">—</option>
-                  {% for c in classes %}<option value="{{ c }}" {% if u.device_class == c %}selected{% endif %}>{{ c }}</option>{% endfor %}
-                </select>
-                <input name="notes" value="{{ u.notes or '' }}" placeholder="notes" size="10">
-                <button type="submit">save</button>
-              </form>
-            </td>
-            <td><button class="ghost discard-btn" data-id="{{ u.id }}">discard</button></td>
-          </tr>
-        {% else %}
-          <tr><td colspan="6" class="muted">No unknowns captured.</td></tr>
-        {% endfor %}
-        </tbody>
+      <h2>Captured bursts <span class="muted">raw RF the radio detected — identify against every decoder</span></h2>
+      <div class="muted" style="font-size:11px;margin-bottom:6px">
+        Every transmission the dongle triggers on is saved (rolling window), decoded or not.
+        <strong>Identify</strong> replays one through all ~200 decoders: undecoded noise reports
+        nothing; a real device reveals which fingerprints match. <a class="link" id="bursts-refresh">refresh</a>
+      </div>
+      <table id="bursts">
+        <thead><tr><th>Captured</th><th>Freq</th><th>Size</th><th></th></tr></thead>
+        <tbody><tr><td colspan="4" class="muted">loading…</td></tr></tbody>
       </table>
-      <div id="inspect-out" class="muted"></div>
+      <div id="burst-out"></div>
     </section>
 
     <!-- Bands: occupancy heatmap + derived watchlist + pin/exclude + recon controls (Pi §7, §9a, System §9). -->
@@ -243,41 +228,53 @@
       });
     });
 
-    // --- unknowns review queue (Pi §6) ---
-    document.querySelectorAll('.unknown-form').forEach(function (form) {
-      form.addEventListener('submit', function (e) {
-        e.preventDefault();
-        const id = form.dataset.id;
-        fetch('/api/unknown/' + id + '/label', { method: 'POST', body: new FormData(form) })
-          .then(function (r) { if (!r.ok) alert('save failed'); });
-      });
-    });
-    document.querySelectorAll('.discard-btn').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        if (!confirm('Discard this unknown?')) return;
-        const id = btn.dataset.id;
-        fetch('/api/unknown/' + id, { method: 'DELETE' }).then(function (r) {
-          if (r.ok) { const row = document.querySelector('tr[data-id="' + id + '"]'); if (row) row.remove(); }
-          else alert('discard failed');
+    // --- captured bursts: raw RF review queue; identify replays through every decoder (§6) ---
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+    function burstFreq(file) {  // g<N>_<freq>M_<rate>k.cu8 -> "<freq> MHz"
+      const m = /_(\d+(?:\.\d+)?)M_/.exec(file || '');
+      return m ? m[1] + ' MHz' : '—';
+    }
+    function loadBursts() {
+      const tb = document.querySelector('#bursts tbody');
+      fetch('/api/samples?limit=30').then(function (r) { return r.json(); }).then(function (rows) {
+        if (!rows.length) { tb.innerHTML =
+          '<tr><td colspan="4" class="muted">No bursts captured yet — decode mode saves them as the radio triggers.</td></tr>'; return; }
+        tb.innerHTML = rows.map(function (s) {
+          return '<tr><td class="muted">' + esc(s.mtime) + '</td><td>' + burstFreq(s.file) +
+            '</td><td class="muted">' + Math.round(s.bytes / 1024) + ' KB</td>' +
+            '<td><button class="ghost identify" data-file="' + esc(s.file) + '">identify</button></td></tr>';
+        }).join('');
+        tb.querySelectorAll('.identify').forEach(function (btn) {
+          btn.addEventListener('click', function () { identifyBurst(btn); });
         });
-      });
-    });
-    document.querySelectorAll('.inspect-link').forEach(function (a) {
-      a.addEventListener('click', function () {
-        const id = a.dataset.id;
-        fetch('/api/unknown/' + id + '/inspect').then(function (r) { return r.json(); }).then(function (j) {
-          const out = document.getElementById('inspect-out');
-          // pulse_summary originates from rtl_433 fields (RF-influenceable) — escape before innerHTML
-          function esc(s) { return String(s).replace(/[&<>"]/g, function (c) {
-            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
-          const dl = j.download_url
-            ? ' · <a class="link" href="' + esc(j.download_url) + '">download IQ (' + (j.iq_bytes | 0) + ' B)</a>'
-            : ' · no recorded IQ for this row';
-          out.innerHTML = 'unknown #' + (j.id | 0) + ' @ <code>' + ((j.freq_hz || 0) / 1e6).toFixed(3) +
-            ' MHz</code> · ' + esc(JSON.stringify(j.pulse_summary)) + dl;
-        }).catch(function () {});
-      });
-    });
+      }).catch(function () { tb.innerHTML = '<tr><td colspan="4" class="muted">could not load bursts</td></tr>'; });
+    }
+    function identifyBurst(btn) {
+      const out = document.getElementById('burst-out');
+      btn.disabled = true; btn.textContent = 'matching…';
+      fetch('/api/sample/redecode', { method: 'POST',
+          body: new URLSearchParams({ file: btn.dataset.file }) })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; },
+                                                  function () { return { ok: false, j: {} }; }); })
+        .then(function (res) {
+          btn.disabled = false; btn.textContent = 'identify';
+          if (!res.ok) { out.innerHTML = '<div class="why">identify failed: ' + esc(res.j.detail || 'error') + '</div>'; return; }
+          const cands = res.j.candidates || [];
+          if (!cands.length) { out.innerHTML = '<div class="muted" style="margin-top:8px">' +
+            esc(res.j.file) + ' — no decoder claims this burst (genuinely unknown signal, or a noise trigger).</div>'; return; }
+          out.innerHTML = '<div class="muted" style="margin:8px 0 4px">' + esc(res.j.file) + ' matches ' +
+            cands.length + ' decoder(s):</div><table><thead><tr><th>Model</th><th>ID/Ch</th>' +
+            '<th>Decoded</th><th>Conf.</th><th>In catalog?</th></tr></thead><tbody>' +
+            cands.map(function (c) { return '<tr><td>' + esc(c.model) + '</td><td>' + esc(c.dev_id) +
+              (c.channel ? '/' + esc(c.channel) : '') + '</td><td class="reading">' + esc(c.reading || '—') +
+              '</td><td class="conf ' + (c.plausible ? 'ok' : 'bad') + '">' + c.confidence.toFixed(2) +
+              '</td><td>' + (c.in_catalog ? 'yes' : '—') + '</td></tr>'; }).join('') + '</tbody></table>';
+        });
+    }
+    var brf = document.getElementById('bursts-refresh');
+    if (brf) brf.addEventListener('click', function (e) { e.preventDefault(); loadBursts(); });
+    loadBursts();
 
     // --- bands: pin/exclude + recon controls (System §9) ---
     document.querySelectorAll('.pin-btn').forEach(function (btn) {
