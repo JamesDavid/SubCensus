@@ -97,10 +97,11 @@
                 <input name="label" value="{{ d.label or '' }}" placeholder="label" size="10">
                 <input name="room" value="{{ d.room or '' }}" placeholder="room" size="7">
                 <select name="device_class">
-                  <option value="">—</option>
+                  <option value="">{% if d.match_class %}⟵ {{ d.match_class }}?{% else %}—{% endif %}</option>
                   {% for c in classes %}<option value="{{ c }}" {% if d.device_class == c %}selected{% endif %}>{{ c }}</option>{% endfor %}
                 </select>
                 <button type="submit">save</button>
+                {% if d.match_name and not d.device_class %}<span class="muted" title="classification brain proposal (System §6) — confirm to teach it">· {{ d.match_name }}?</span>{% endif %}
               </form>
             </td>
           </tr>

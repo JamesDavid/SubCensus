@@ -37,6 +37,7 @@ class Collector:
         iq_dir: str = "",
         max_iq_gb: float = 20,
         mqtt: MqttPublisher | None = None,
+        brain=None,
     ):
         self.db = db
         self.place = place
@@ -44,6 +45,7 @@ class Collector:
         self.iq_dir = iq_dir
         self.max_iq_gb = max_iq_gb
         self.mqtt = mqtt
+        self.brain = brain  # classification brain (System §6): protocol_map lookup on each decode
         self._mqtt_announced: set[str] = set()  # devices whose HA discovery config was sent
         self.stats = CollectorStats()
 
@@ -54,6 +56,14 @@ class Collector:
         if r is not None:
             did = self.db.ingest(r)
             self.stats.decoded += 1
+            # Classification brain (System §6.1): propose friendly name + device_class from
+            # protocol_map. Advisory — written to match_* only, never overwrites a user label.
+            if self.brain is not None:
+                m = self.brain.classify(r.model)
+                if m is not None:
+                    self.db.set_device_match(
+                        did, m["name"], m["device_class"], m["confidence"], m["source"]
+                    )
             log.info(
                 "SC event=decoded model=%s id=%s freq=%d rssi=%s device=%s",
                 r.model, r.dev_id, r.freq_hz, r.rssi, did,

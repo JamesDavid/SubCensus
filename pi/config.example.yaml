@@ -10,6 +10,8 @@ capture_samples: true       # DEFAULT ON: save every detected burst as a raw .cu
                             # dir (rtl_433 -S all) so any burst can be re-matched against EVERY
                             # decoder later from the device page (System §6). Rolling window.
 max_samples_gb: 2           # prune oldest samples past this cap (never fills the SD card)
+max_events: 500000          # rolling-window retention for the events log (0 = keep forever);
+                            # device roll-ups (count / cadence) survive pruning
 prioritize_watchlist: false # opt-in: reorder hop/dongle attention by the place watchlist (§3)
 place: home                 # active Place profile (§9a); stamps all records
 places_dir: /var/lib/subcensuspi/places

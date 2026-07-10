@@ -22,6 +22,12 @@ Environment=SUBCENSUSPI_PLACES_DIR=/var/lib/subcensuspi/places
 # Collector config for decode mode, and the file that remembers the selected radio mode.
 Environment=SUBCENSUSPI_CONFIG=/var/lib/subcensuspi/config.yaml
 Environment=SUBCENSUSPI_RADIO_STATE=/var/lib/subcensuspi/radio_state.json
+# Classification brain (protocol_map lookup + active-learning writes), shared with the Zero.
+Environment=SUBCENSUSPI_SIGNATURES=/var/lib/subcensuspi/signatures
+# Admin/test API: enables /api/test/ingest (drive the pipeline with no dongle) + /api/admin/update
+# (git pull + restart). LAN-only single-user device; leave off if the dashboard is exposed wider.
+Environment=SUBCENSUSPI_ADMIN_API=1
+Environment=SUBCENSUSPI_REPO_DIR=/home/pi/SubCensus
 ExecStart=/home/pi/SubCensus/pi/.venv/bin/uvicorn subcensuspi.web.app:app --host 0.0.0.0 --port 8080
 # Restart=always is the process safety net. Per-dongle rtl_433 relaunch (Pi §9) is handled INSIDE
 # the decode subprocess (supervise_stream, backoff); this restarts the whole owner if it dies.

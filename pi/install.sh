@@ -73,6 +73,22 @@ fi
 [ -f config.yaml ] || cp config.example.yaml config.yaml
 [ -f "$DATA_DIR/config.yaml" ] || cp config.example.yaml "$DATA_DIR/config.yaml"
 
+# 5b. seed the classification brain (System §6) from the packaged shared signatures so
+#     protocol_map lookup works on first boot; user labels then grow it in place.
+for f in protocol_map.csv fingerprints.csv; do
+    if [ -f "$DEST/shared/signatures/$f" ] && [ ! -f "$DATA_DIR/signatures/$f" ]; then
+        install -m 644 "$DEST/shared/signatures/$f" "$DATA_DIR/signatures/$f"
+    fi
+done
+
+# 5c. allow the self-update API (/api/admin/update) to restart the service without a password.
+#     Scoped to exactly this one unit — nothing else. LAN single-user device.
+SUDOERS=/etc/sudoers.d/subcensuspi
+if command -v systemctl >/dev/null 2>&1; then
+    printf '%s ALL=(root) NOPASSWD: /usr/bin/systemctl restart subcensuspi\n' "$USER" |
+        sudo tee "$SUDOERS" >/dev/null && sudo chmod 440 "$SUDOERS"
+fi
+
 # 6. drop any pre-refactor two-service install so it can't keep fighting for the dongle.
 if command -v systemctl >/dev/null 2>&1; then
     for old in subcensuspi-collector subcensuspi-web; do

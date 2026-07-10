@@ -22,6 +22,8 @@ from pathlib import Path as _Path
 from ..db import Database
 import subprocess
 
+from ..brain import Brain
+from ..collector.collector import Collector
 from ..live_sweep import LiveSweeper
 from ..plausibility import assess
 from ..radio import RadioManager
@@ -96,6 +98,9 @@ def create_app(
     places_dir: str | None = None,
     config_path: str | None = None,
     radio_state_path: str | None = None,
+    signatures_dir: str | None = None,
+    admin_api: bool = False,
+    repo_dir: str | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -116,9 +121,19 @@ def create_app(
     app.state.radio = RadioManager(
         app.state.live, config_path=config_path, state_path=radio_state_path
     )
+    app.state.brain = Brain(signatures_dir)  # classification brain (System §6): read + learn
+    app.state.admin_api = admin_api          # gate the test-ingest + self-update endpoints
+    app.state.repo_dir = repo_dir            # git checkout to pull for self-update
 
     def get_db() -> Database:
         return Database(app.state.db_path)
+
+    def _require_admin() -> None:
+        if not app.state.admin_api:
+            raise HTTPException(
+                status_code=403,
+                detail="admin/test API disabled — set SUBCENSUSPI_ADMIN_API=1 to enable",
+            )
 
     def place_dir(p: str | None) -> _Path | None:
         pl = p or app.state.place
@@ -726,7 +741,8 @@ def create_app(
             )
         db = get_db()
         try:
-            if db.get_device(device_id) is None:
+            row = db.get_device(device_id)
+            if row is None:
                 raise HTTPException(status_code=404, detail="device not found")
             db.set_device_label(
                 device_id,
@@ -734,9 +750,82 @@ def create_app(
                 room=room or None,
                 device_class=device_class or None,
             )
-            return JSONResponse({"ok": True, "device_id": device_id})
+            # Active-learning loop (System §6): a user-confirmed class teaches the brain, so every
+            # future decode of this rtl_433 model is classified immediately (and other places /
+            # the Zero benefit via the shared brain). Only fires on a real class confirmation.
+            learned = False
+            if device_class:
+                learned = app.state.brain.learn(
+                    row["model"], friendly_name=label or "", device_class=device_class,
+                    typical_use=room or "",
+                )
+            return JSONResponse({"ok": True, "device_id": device_id, "learned": learned})
         finally:
             db.close()
+
+    # --- Admin/test API (gated by SUBCENSUSPI_ADMIN_API): drive + deploy without the dongle ---
+
+    @app.post("/api/test/ingest")
+    def api_test_ingest(request: Request, events: str = Form(...)):
+        """Feed synthetic rtl_433 JSON through the REAL live path (parse -> catalog -> brain
+        classify), so the whole pipeline can be exercised with no dongle. `events` is a JSON array
+        of rtl_433 event objects (or newline-delimited JSON). Returns collector stats. GATED."""
+        _require_admin()
+        try:
+            payload = json.loads(events)
+            lines = ([json.dumps(e) for e in payload] if isinstance(payload, list)
+                     else [l for l in events.splitlines() if l.strip()])
+        except (ValueError, TypeError):
+            lines = [l for l in events.splitlines() if l.strip()]
+        db = get_db()
+        try:
+            c = Collector(db, place=app.state.place or "home", brain=app.state.brain)
+            for line in lines:
+                c.process_line(line, source="test")
+            s = c.stats
+            return {"lines": s.lines, "decoded": s.decoded, "unknowns": s.unknowns,
+                    "skipped": s.skipped, "devices": db.device_count()}
+        finally:
+            db.close()
+
+    @app.get("/api/admin/version")
+    def api_admin_version():
+        """Deployed git commit + brain size — so a deploy can be verified over HTTP. GATED."""
+        _require_admin()
+        rev = branch = "?"
+        if app.state.repo_dir:
+            try:
+                rev = subprocess.run(["git", "-C", app.state.repo_dir, "rev-parse", "--short", "HEAD"],
+                                     capture_output=True, text=True, timeout=10).stdout.strip()
+                branch = subprocess.run(["git", "-C", app.state.repo_dir, "rev-parse", "--abbrev-ref", "HEAD"],
+                                        capture_output=True, text=True, timeout=10).stdout.strip()
+            except (OSError, subprocess.SubprocessError):  # pragma: no cover
+                pass
+        return {"commit": rev, "branch": branch, "brain_rows": len(app.state.brain),
+                "repo_dir": app.state.repo_dir}
+
+    @app.post("/api/admin/update")
+    def api_admin_update():
+        """git pull the configured checkout, then restart the service so the new code runs (Pi
+        self-update). Returns the git output + new HEAD; the restart drops the connection, so a
+        follow-up GET /api/admin/version confirms the deploy. GATED. Pulls only the existing
+        remote/branch — no arbitrary source."""
+        _require_admin()
+        if not app.state.repo_dir:
+            raise HTTPException(status_code=400, detail="no repo_dir configured (SUBCENSUSPI_REPO_DIR)")
+        try:
+            pull = subprocess.run(["git", "-C", app.state.repo_dir, "pull", "--ff-only"],
+                                  capture_output=True, text=True, timeout=120)
+        except (OSError, subprocess.SubprocessError) as e:
+            raise HTTPException(status_code=500, detail=f"git pull failed: {e}")
+        head = subprocess.run(["git", "-C", app.state.repo_dir, "rev-parse", "--short", "HEAD"],
+                              capture_output=True, text=True, timeout=10).stdout.strip()
+        out = (pull.stdout + pull.stderr).strip()
+        if pull.returncode != 0:
+            raise HTTPException(status_code=500, detail=f"git pull failed: {out}")
+        # Restart out-of-band so this request can return first; systemd brings us back up.
+        subprocess.Popen(["bash", "-c", "sleep 1; sudo systemctl restart subcensuspi"])
+        return {"ok": True, "head": head, "git": out, "restarting": True}
 
     return app
 
@@ -749,4 +838,7 @@ app = create_app(
     places_dir=os.environ.get("SUBCENSUSPI_PLACES_DIR"),
     config_path=os.environ.get("SUBCENSUSPI_CONFIG"),
     radio_state_path=os.environ.get("SUBCENSUSPI_RADIO_STATE"),
+    signatures_dir=os.environ.get("SUBCENSUSPI_SIGNATURES", "/var/lib/subcensuspi/signatures"),
+    admin_api=os.environ.get("SUBCENSUSPI_ADMIN_API") == "1",
+    repo_dir=os.environ.get("SUBCENSUSPI_REPO_DIR"),
 )

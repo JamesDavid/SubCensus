@@ -62,6 +62,10 @@ def main(argv: list[str] | None = None) -> int:
     cfg = Config.load(args.config)
     db = Database(args.db or cfg.db_path)
     mqtt = _make_mqtt(cfg)
+    from ..brain import Brain
+
+    brain = Brain(cfg.signatures_dir)  # System §6: protocol_map lookup on each live decode
+    log.info("SC event=brain_loaded protocol_map_rows=%d dir=%s", len(brain), cfg.signatures_dir)
     collector = Collector(
         db,
         place=cfg.place,
@@ -69,6 +73,7 @@ def main(argv: list[str] | None = None) -> int:
         iq_dir=cfg.place_iq_dir(),  # per-place captured IQ (§9a), not the flat iq_dir
         max_iq_gb=cfg.max_iq_gb,
         mqtt=mqtt,
+        brain=brain,
     )
 
     try:
@@ -109,16 +114,26 @@ def _run_live(cfg: Config, collector: Collector) -> None:  # pragma: no cover - 
     # dir, so any burst can be re-matched against every decoder later. Rolling window — pruned at
     # launch (stream_live) and every 10 min by the janitor, capped at cfg.max_samples_gb.
     capture_dir = cfg.place_iq_dir() if cfg.capture_samples else None
-    if capture_dir:
-        import threading
-        import time as _time
+    import threading
+    import time as _time
 
-        def _janitor() -> None:  # pragma: no cover - timing loop
-            while True:
-                _time.sleep(600)
-                prune_samples(capture_dir, max_gb=cfg.max_samples_gb)
+    def _janitor() -> None:  # pragma: no cover - timing loop
+        # Housekeeping every 10 min: bound the sample window + events table, keep cadence_* fresh
+        # (§7a) so the dashboard's Devices list shows live cadence instead of NULL. Its own DB
+        # handle — SQLite WAL lets the consumer keep writing.
+        jdb = Database(args.db or cfg.db_path)
+        while True:
+            _time.sleep(600)
+            try:
+                if capture_dir:
+                    prune_samples(capture_dir, max_gb=cfg.max_samples_gb)
+                if cfg.max_events > 0:
+                    jdb.prune_events(cfg.max_events)
+                jdb.refresh_all_cadences()
+            except Exception as exc:  # pragma: no cover - never let housekeeping kill the census
+                log.warning("SC event=janitor_error err=%s", exc)
 
-        threading.Thread(target=_janitor, daemon=True).start()
+    threading.Thread(target=_janitor, daemon=True).start()
     streams = [
         SourceStream(
             supervise_stream(lambda d=d: stream_live(d, capture_dir=capture_dir)),

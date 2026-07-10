@@ -25,6 +25,20 @@ _DEVICE_CADENCE_COLS = {
     "cadence_samples": "INTEGER",
 }
 
+# match_* columns hold the classification brain's PROPOSAL (System §6): friendly name + class +
+# confidence + source (decoder|fingerprint|user). Advisory only — the user's device_class/label
+# stay the source of truth; these never auto-relabel, they suggest.
+_DEVICE_MATCH_COLS = {
+    "match_name": "TEXT",
+    "match_class": "TEXT",
+    "match_confidence": "REAL",
+    "match_source": "TEXT",
+}
+
+# Per-process guard: the schema is idempotent (CREATE IF NOT EXISTS) but a fresh Database() per
+# request re-ran executescript + PRAGMA probes on every poll. Run it once per (process, path).
+_INITIALIZED: set[str] = set()
+
 
 def iso_to_epoch(ts: str) -> float | None:
     """Best-effort ISO-8601 -> epoch seconds (rtl_433 -M time:iso:tz). None if unparseable."""
@@ -109,14 +123,18 @@ class Database:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA foreign_keys=ON")
-        self.conn.executescript(SCHEMA)
-        self._migrate()
-        self.conn.commit()
+        # Schema DDL + migration probes are idempotent but not free; a per-request Database() on
+        # the 3-4 s poll loops re-ran them constantly. Do it once per (process, db path).
+        if self.path not in _INITIALIZED:
+            self.conn.executescript(SCHEMA)
+            self._migrate()
+            self.conn.commit()
+            _INITIALIZED.add(self.path)
 
     def _migrate(self) -> None:
         """Additive migrations for DBs created before newer columns (idempotent)."""
         have = {r["name"] for r in self.conn.execute("PRAGMA table_info(devices)").fetchall()}
-        for col, coltype in _DEVICE_CADENCE_COLS.items():
+        for col, coltype in {**_DEVICE_CADENCE_COLS, **_DEVICE_MATCH_COLS}.items():
             if col not in have:
                 self.conn.execute(f"ALTER TABLE devices ADD COLUMN {col} {coltype}")
 
@@ -167,6 +185,35 @@ class Database:
         )
         self.conn.commit()
         return cur.lastrowid
+
+    def set_device_match(
+        self, device_id: str, name: str | None, device_class: str | None,
+        confidence: float, source: str,
+    ) -> None:
+        """Write the classification brain's PROPOSAL into the match_* columns (System §6).
+        Advisory only — this never touches the user's device_class/label (never auto-relabel)."""
+        self.conn.execute(
+            "UPDATE devices SET match_name=?, match_class=?, match_confidence=?, match_source=?"
+            " WHERE device_id=?",
+            (name, device_class, confidence, source, device_id),
+        )
+        self.conn.commit()
+
+    def prune_events(self, keep: int) -> int:
+        """Rolling-window retention for the events log (Pi §5): keep the newest `keep` rows,
+        delete the rest. events grows forever otherwise (a 30 s sensor is ~90k rows/month) and
+        drags the dashboard down. Rolled-up device stats (count/first_seen/cadence) are unaffected
+        — they live on the devices row, not recomputed from raw events. Returns #deleted."""
+        if keep <= 0:
+            return 0
+        cutoff = self.conn.execute(
+            "SELECT id FROM events ORDER BY id DESC LIMIT 1 OFFSET ?", (keep - 1,)
+        ).fetchone()
+        if cutoff is None:
+            return 0
+        cur = self.conn.execute("DELETE FROM events WHERE id < ?", (cutoff["id"],))
+        self.conn.commit()
+        return cur.rowcount
 
     def set_device_label(
         self, device_id: str, label: str | None = None, room: str | None = None,

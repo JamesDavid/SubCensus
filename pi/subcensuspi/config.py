@@ -41,6 +41,8 @@ class Config:
     #                               re-matched against every decoder later (§6). Rolling window —
     #                               pruned to max_samples_gb, never grows unbounded.
     max_samples_gb: float = 2.0
+    max_events: int = 500_000     # rolling-window retention for the events log (0 = unbounded);
+    #                               device roll-ups (count/cadence) are unaffected by pruning
     prioritize_watchlist: bool = False  # opt-in: reorder hop/dongle attention by watchlist (§3)
     place: str = "home"
     places_dir: str = "/var/lib/subcensuspi/places"
@@ -84,6 +86,7 @@ class Config:
             capture_unknowns=bool(data.get("capture_unknowns", False)),
             capture_samples=bool(data.get("capture_samples", True)),
             max_samples_gb=float(data.get("max_samples_gb", 2.0)),
+            max_events=int(data.get("max_events", 500_000)),
             prioritize_watchlist=bool(data.get("prioritize_watchlist", False)),
             place=str(data.get("place", "home")),
             places_dir=str(data.get("places_dir", "/var/lib/subcensuspi/places")),
