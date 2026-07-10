@@ -94,8 +94,9 @@ def test_review_queue_renders_in_dashboard(db, fixtures_dir, tmp_path):
     db.close()
     client = TestClient(create_app(str(tmp_path / "census.db")))
     html = client.get("/").text
-    assert "Unknowns" in html  # §6/§7 review-queue section rendered
-    assert "play / inspect" in html  # inspect link present
+    # the review queue for undecoded signals is now the Captured bursts section (backed by the
+    # -S all sample trail + redecode), which supersedes the never-populated unknowns table.
+    assert "Captured bursts" in html and "identify against every decoder" in html
 
 
 def test_unknown_inspect_and_iq_download(db, fixtures_dir, tmp_path):
