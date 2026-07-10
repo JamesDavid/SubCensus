@@ -530,11 +530,11 @@ def create_app(
         st = app.state.radio.status()
         db = get_db()
         try:
-            row = db.conn.execute("SELECT ts FROM events ORDER BY id DESC LIMIT 1").fetchone()
+            last_ts = db.latest_event_ts()  # newest event with a real timestamp
         finally:
             db.close()
-        st["last_event_ts"] = row["ts"] if row else None
-        t = _parse_ts(row["ts"]) if row else None
+        st["last_event_ts"] = last_ts
+        t = _parse_ts(last_ts) if last_ts else None
         if t is not None:
             now = datetime.now(t.tzinfo) if t.tzinfo else datetime.now()
             st["last_event_age_s"] = max(0, int((now - t).total_seconds()))
@@ -763,6 +763,17 @@ def create_app(
         finally:
             db.close()
 
+    @app.delete("/api/device/{device_id}")
+    def api_delete_device(device_id: str):
+        """Curation: remove a device + all its events (prune a phantom / false-decode row)."""
+        db = get_db()
+        try:
+            if not db.delete_device(device_id):
+                raise HTTPException(status_code=404, detail="device not found")
+            return JSONResponse({"ok": True, "device_id": device_id})
+        finally:
+            db.close()
+
     # --- Admin/test API (gated by SUBCENSUSPI_ADMIN_API): drive + deploy without the dongle ---
 
     @app.post("/api/test/ingest")
@@ -771,9 +782,18 @@ def create_app(
         classify), so the whole pipeline can be exercised with no dongle. `events` is a JSON array
         of rtl_433 event objects (or newline-delimited JSON). Returns collector stats. GATED."""
         _require_admin()
+        now_iso = datetime.now().astimezone().isoformat(timespec="seconds")
+
+        def _stamp(e: dict) -> str:
+            # give injected events a real ts if they lack one, so cadence/health behave like a
+            # true reception (a tsless row otherwise poisons the newest-event health signal)
+            if isinstance(e, dict) and not e.get("time"):
+                e = {**e, "time": now_iso}
+            return json.dumps(e)
+
         try:
             payload = json.loads(events)
-            lines = ([json.dumps(e) for e in payload] if isinstance(payload, list)
+            lines = ([_stamp(e) for e in payload] if isinstance(payload, list)
                      else [l for l in events.splitlines() if l.strip()])
         except (ValueError, TypeError):
             lines = [l for l in events.splitlines() if l.strip()]

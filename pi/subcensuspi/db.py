@@ -199,6 +199,25 @@ class Database:
         )
         self.conn.commit()
 
+    def delete_device(self, device_id: str) -> bool:
+        """Remove a device and all its events (curation: prune a phantom / false-decode row).
+        Returns True if the device existed."""
+        existed = self.conn.execute(
+            "SELECT 1 FROM devices WHERE device_id=?", (device_id,)
+        ).fetchone() is not None
+        self.conn.execute("DELETE FROM events WHERE device_id=?", (device_id,))
+        self.conn.execute("DELETE FROM devices WHERE device_id=?", (device_id,))
+        self.conn.commit()
+        return existed
+
+    def latest_event_ts(self) -> str | None:
+        """Newest event timestamp that is actually parseable — ignores rows with an empty ts
+        (e.g. a synthetic test injection) so the decode-health signal stays honest."""
+        row = self.conn.execute(
+            "SELECT ts FROM events WHERE ts IS NOT NULL AND ts != '' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        return row["ts"] if row else None
+
     def prune_events(self, keep: int) -> int:
         """Rolling-window retention for the events log (Pi §5): keep the newest `keep` rows,
         delete the rest. events grows forever otherwise (a 30 s sensor is ~90k rows/month) and

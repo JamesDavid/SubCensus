@@ -40,6 +40,23 @@ def test_test_ingest_runs_full_pipeline(tmp_path):
     assert dev["match_name"] == "Acurite Tower" and dev["match_class"] == "weather"
 
 
+def test_test_ingest_stamps_timestamp_for_health(tmp_path):
+    """Injected events with no `time` get stamped, so the decode-health signal stays real."""
+    client = TestClient(create_app(str(tmp_path / "c.db"), place="home", admin_api=True))
+    client.post("/api/test/ingest", data={"events": '[{"model":"Foo","id":1,"freq":315.0}]'})
+    j = client.get("/api/radio").json()
+    assert j["last_event_ts"] is not None and j["last_event_age_s"] is not None
+
+
+def test_delete_device(tmp_path):
+    client = TestClient(create_app(str(tmp_path / "c.db"), place="home", admin_api=True))
+    client.post("/api/test/ingest", data={"events": '[{"model":"Foo","id":1,"freq":315.0}]'})
+    dev = client.get("/api/devices").json()[0]
+    assert client.delete(f"/api/device/{dev['device_id']}").status_code == 200
+    assert client.get("/api/devices").json() == []
+    assert client.delete(f"/api/device/{dev['device_id']}").status_code == 404
+
+
 def test_test_ingest_accepts_newline_json(tmp_path):
     client = TestClient(create_app(str(tmp_path / "c.db"), place="home", admin_api=True))
     events = '{"model":"Foo","id":1,"freq":315.0,"snr":9}\n{"model":"Foo","id":2,"freq":315.0}'
