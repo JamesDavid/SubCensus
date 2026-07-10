@@ -181,9 +181,12 @@ def stream_live(
     if capture_dir:
         from uuid import uuid4
 
+        # Prune FIRST, then create this launch's dir — prune_samples sweeps EMPTY run-* dirs, so
+        # creating the (empty) run dir before pruning would delete our own cwd and rtl_433 would
+        # fail to launch into a missing directory (crash-loop). Order matters.
+        prune_samples(capture_dir)  # each (re)launch trims the window; a janitor covers long runs
         run_dir = Path(capture_dir) / f"run-{uuid4().hex[:8]}"
         run_dir.mkdir(parents=True, exist_ok=True)
-        prune_samples(capture_dir)  # each (re)launch trims the window; a janitor covers long runs
         cwd = str(run_dir)
     proc = subprocess.Popen(
         build_argv(dongle, samples=bool(capture_dir)), stdout=subprocess.PIPE, text=True, cwd=cwd

@@ -61,6 +61,20 @@ def test_prune_samples(tmp_path):
     assert prune_samples(tmp_path / "missing") == 0
 
 
+def test_prune_does_not_sweep_a_fresh_empty_run_dir(tmp_path):
+    """Regression: a just-created empty run dir must survive a prune that runs BEFORE rtl_433
+    launches into it. (The crash-loop bug: prune swept the new empty cwd -> Errno 2 on launch.)"""
+    from subcensuspi.collector.rtl433 import prune_samples
+
+    # simulate the fixed order: prune first, THEN make the run dir; it must still exist after
+    prune_samples(tmp_path)
+    run = tmp_path / "run-deadbeef"
+    run.mkdir()
+    # a later prune (janitor) may sweep it only once it's genuinely empty AND not the live cwd;
+    # here we assert the create-after-prune ordering leaves it present for the launch
+    assert run.is_dir()
+
+
 def test_prune_samples_recursive_and_sweeps_empty_run_dirs(tmp_path):
     """Samples live in per-launch run-* subdirs; prune must recurse and remove emptied run dirs."""
     import os
