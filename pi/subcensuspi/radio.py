@@ -221,6 +221,15 @@ class RadioManager:
         except OSError:  # pragma: no cover - best-effort; a read-only FS just loses resume
             pass
 
+    def teardown(self) -> None:
+        """Free the dongle on process shutdown WITHOUT persisting a mode change. set_mode('off')
+        would write 'off' to the state file and clobber the user's decode choice, so every restart
+        (incl. self-update) resumed 'off' and silently stopped the census. This stops the radio but
+        leaves radio_state.json intact, so resume() restores decode on the next boot."""
+        with self._lock:
+            self._stop_decode()
+            self.live.stop()
+
     def load_persisted(self) -> dict | None:
         if not self.state_path:
             return None

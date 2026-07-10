@@ -70,6 +70,23 @@ def test_spectrum_starts_and_is_exclusive():
     assert st["mode"] == "off" and live.running is False
 
 
+def test_teardown_does_not_persist_off(tmp_path):
+    """Shutdown must free the dongle WITHOUT persisting 'off' — else every restart resumes off
+    and the census never comes back. The saved mode survives teardown."""
+    import json
+
+    state = tmp_path / "radio_state.json"
+    r = RadioManager(FakeLive(), state_path=str(state))
+    r.set_mode("spectrum", band="433")
+    assert json.loads(state.read_text())["mode"] == "spectrum"
+    r.teardown()
+    assert json.loads(state.read_text())["mode"] == "spectrum"  # NOT clobbered to off
+    # a fresh manager resumes the persisted mode after the "restart"
+    r2 = RadioManager(FakeLive(), state_path=str(state))
+    r2.resume()
+    assert r2.status()["mode"] == "spectrum"
+
+
 def test_spectrum_stop_resumes_prior_mode():
     """A spectrum look is a detour: after it, the radio returns to whatever ran before (usually
     the 24/7 census), instead of persisting 'off' and silently killing decode across reboots."""

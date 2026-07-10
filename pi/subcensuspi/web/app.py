@@ -107,7 +107,9 @@ def create_app(
         app.state.radio.resume()  # headless boot: re-apply the last selected mode (best-effort)
         yield
         try:
-            app.state.radio.set_mode("off")  # clean teardown so the dongle is freed on restart
+            # Free the dongle WITHOUT persisting 'off' — otherwise every restart clobbers the
+            # saved mode and the census never comes back up (resume reads 'off').
+            app.state.radio.teardown()
         except Exception:  # pragma: no cover
             pass
 
