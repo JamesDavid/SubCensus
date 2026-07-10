@@ -1,0 +1,17 @@
+syntax = "proto3";
+package PB;
+import "gui.proto";
+// Minimal wire-compatible subset of flipper.proto's Main — only the Gui screenshot/input
+// content the SubCensus serial harness uses. Field numbers match upstream flipper.proto, so
+// frames encode/decode identically; other content fields are simply absent (ignored on decode).
+message Main {
+  uint32 command_id = 1;
+  uint32 command_status = 2;
+  bool has_next = 3;
+  oneof content {
+    PB_Gui.StartScreenStreamRequest gui_start_screen_stream_request = 20;
+    PB_Gui.StopScreenStreamRequest gui_stop_screen_stream_request = 21;
+    PB_Gui.ScreenFrame gui_screen_frame = 22;
+    PB_Gui.SendInputEventRequest gui_send_input_event_request = 23;
+  }
+}

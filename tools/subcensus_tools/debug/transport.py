@@ -19,6 +19,25 @@ now — which is the point of building the helper first.
 from __future__ import annotations
 
 import abc
+import time
+
+_PB = None
+
+
+def _load_pb():
+    """Lazy-load the compiled Flipper protobuf (proto/*_pb2.py). Kept out of import time so the
+    framing/parse helpers stay dependency-free for the offline tests."""
+    global _PB
+    if _PB is None:
+        import sys
+        from pathlib import Path
+        proto_dir = str(Path(__file__).resolve().parent / "proto")
+        if proto_dir not in sys.path:
+            sys.path.insert(0, proto_dir)
+        import flippermin_pb2  # noqa: E402  (generated)
+        import gui_pb2  # noqa: E402  (generated)
+        _PB = (flippermin_pb2, gui_pb2)
+    return _PB
 
 
 # --- protobuf delimited framing (pure, testable) ---
@@ -92,7 +111,9 @@ class PySerialTransport(RpcTransport):
     """Real serial transport. Lazy-imports pyserial so the rest of the harness needs no
     serial stack. Pin the port to the Flipper's CDC device (Debug §2.4)."""
 
-    def __init__(self, port: str, baudrate: int = 230400, timeout: float = 1.0) -> None:
+    def __init__(self, port: str, baudrate: int = 115200, timeout: float = 1.0) -> None:
+        # 115200: the Flipper CDC is baud-agnostic for data, but 230400 trips a Windows
+        # ClearCommError on big reads with some drivers — 115200 is the safe, tested value.
         try:
             import serial  # type: ignore
         except ImportError as e:  # pragma: no cover - needs the extra installed
@@ -121,10 +142,25 @@ class RpcSession:
 
     def __init__(self, transport: RpcTransport) -> None:
         self.transport = transport
+        self._cmd_id = 0
+        self._rpc_started = False
+
+    def _next_id(self) -> int:
+        self._cmd_id += 1
+        return self._cmd_id
 
     def send_frame(self, payload: bytes) -> None:
         """Send a length-delimited RPC frame (varint length prefix + payload)."""
         self.transport.write(encode_varint(len(payload)) + payload)
+
+    def _read_exact(self, n: int, timeout: float | None = None) -> bytes:
+        buf = bytearray()
+        while len(buf) < n:
+            chunk = self.transport.read(n - len(buf), timeout)
+            if not chunk:
+                raise TimeoutError(f"short RPC read: {len(buf)}/{n} bytes")
+            buf.extend(chunk)
+        return bytes(buf)
 
     def read_frame(self, timeout: float | None = None) -> bytes:
         """Read one length-delimited frame. Reads the varint prefix a byte at a time."""
@@ -137,19 +173,54 @@ class RpcSession:
             if not (b[0] & 0x80):
                 break
         length, _ = decode_varint(bytes(prefix))
-        return self.transport.read(length, timeout)
+        return self._read_exact(length, timeout)
 
     # --- device ops (need the firmware protobuf + a real Flipper) ---
 
-    def screenshot(self) -> bytes:  # pragma: no cover - hardware
-        raise NotImplementedError(
-            "TODO(hw): build a Gui ScreenFrame request with the pinned firmware's protobuf "
-            "(flipperzero-protobuf), send via send_frame(), decode the 1024-byte framebuffer "
-            "from the response, then render with framebuffer.decode_framebuffer()."
-        )
+    def start_rpc(self) -> None:
+        """Enter the Flipper's RPC mode from the text CLI (`start_rpc_session`). After this the
+        channel is length-delimited protobuf (Debug §2.4). Idempotent."""
+        if self._rpc_started:
+            return
+        self.transport.write(b"\r")           # finish any half-typed line
+        time.sleep(0.15)
+        self.transport.read(8192, 0.3)        # drain the prompt/banner
+        self.transport.write(b"start_rpc_session\r")
+        time.sleep(0.4)
+        self.transport.read(8192, 0.6)        # drain the echoed command; RPC is now active
+        self._rpc_started = True
 
-    def send_input(self, events) -> None:  # pragma: no cover - hardware
-        raise NotImplementedError(
-            "TODO(hw): map InputEvents to the firmware's InputKey/InputType protobuf enums "
-            "and send Gui SendInputEvent frames."
-        )
+    def send_input(self, events) -> None:
+        """Inject Gui input events (InputEvent list) over RPC — drives the on-device UI."""
+        pb, gui = _load_pb()
+        self.start_rpc()
+        for ev in events:
+            m = pb.Main(command_id=self._next_id())
+            m.gui_send_input_event_request.key = gui.InputKey.Value(ev.key.name)
+            m.gui_send_input_event_request.type = gui.InputType.Value(ev.type.name)
+            self.send_frame(m.SerializeToString())
+            time.sleep(0.06)
+
+    def screenshot(self) -> bytes:
+        """Grab one 1024-byte framebuffer: start the screen stream, read until a ScreenFrame
+        arrives, stop the stream. Decode with framebuffer.decode_framebuffer()."""
+        pb, _gui = _load_pb()
+        self.start_rpc()
+        start = pb.Main(command_id=self._next_id())
+        start.gui_start_screen_stream_request.SetInParent()
+        self.send_frame(start.SerializeToString())
+        data = None
+        for _ in range(12):  # skip any command-status acks until the frame
+            try:
+                msg = pb.Main.FromString(self.read_frame(timeout=2.0))
+            except TimeoutError:
+                break
+            if msg.WhichOneof("content") == "gui_screen_frame":
+                data = bytes(msg.gui_screen_frame.data)
+                break
+        stop = pb.Main(command_id=self._next_id())
+        stop.gui_stop_screen_stream_request.SetInParent()
+        self.send_frame(stop.SerializeToString())
+        if data is None:
+            raise TimeoutError("no ScreenFrame received (is an app in the foreground?)")
+        return data
