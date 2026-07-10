@@ -204,8 +204,12 @@ def create_app(
                 and not is_birdie(b.freq_hz)  # drop RTL-SDR self-noise spurs (28.8 MHz harmonics)
             ]
             # rank by activity (crossings) first — a real device bursts on/off; a residual
-            # continuous carrier does not — then by occupancy.
-            occupancy.sort(key=lambda r: (r["crossings"], r["occupancy"]), reverse=True)
+            # continuous carrier does not — then by occupancy. Show only the most-active bins: a
+            # coarse wideband sweep marks thousands of noise-threshold crossings, which is not
+            # signal — the top of this list is where a real intermittent emitter would surface.
+            occupancy.sort(key=lambda r: (r["crossings"], r["occupancy"], r["peak_rssi"]),
+                           reverse=True)
+            occupancy = occupancy[:40]
         has_activity = len(occupancy) > 0
         watchlist = read_watchlist_rows(d / "watchlist.csv") if d is not None else []
         # Waterfall: the downsampled rtl_power sweeps (freq x time, §7 tier 2). Don't paint the
