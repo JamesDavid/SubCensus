@@ -25,6 +25,8 @@
     /* unicode-block sparkline (Pi §7) — inline, self-contained, no asset/JS */
     .spark { font-family: monospace; letter-spacing: -1px; color: #6fd08c; font-size: 14px; line-height: 1; white-space: pre; }
     .reading { color: #cfe3ff; font-size: 12px; }
+    .conf { font-variant-numeric: tabular-nums; font-size: 12px; cursor: help; }
+    .conf.ok { color: #6fd08c; } .conf.bad { color: #e0a03e; }
     #feed .rd { color: #9fd0ff; }
     .controls { margin-bottom: 8px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
     a.link { color: #9fd0ff; cursor: pointer; text-decoration: underline; }
@@ -35,7 +37,7 @@
     <h1>SubCensusPi <span class="muted">place: {{ place or "all" }}</span></h1>
     <div class="muted">Wideband RTL-SDR ISM census — RX only.
       {{ devices|length }} device{{ '' if devices|length == 1 else 's' }}{% if hidden_count %}
-      shown · {{ hidden_count }} hidden as seen-once noise{% endif %}.</div>
+      shown · {{ hidden_count }} hidden as low-confidence (likely false decodes){% endif %}.</div>
   </header>
   <main>
     <!-- Capture: the one web-controlled radio owner (Pi §3, §9). One dongle, one mode at a time. -->
@@ -63,17 +65,17 @@
     <section>
       <h2>Devices
         <span class="muted">
-        {% if min_count > 1 %}
-          hiding {{ hidden_count }} seen-once (likely false decodes) ·
-          <a class="link" href="?min_count=1{% if place %}&place={{ place }}{% endif %}">show all {{ total_devices }}</a>
+        {% if not show_all %}
+          {% if hidden_count %}hiding {{ hidden_count }} low-confidence (likely false decodes) · {% endif %}
+          <a class="link" href="?show_all=1{% if place %}&place={{ place }}{% endif %}">show all {{ total_devices }}</a>
         {% else %}
-          showing all {{ total_devices }} ·
-          <a class="link" href="?min_count=2{% if place %}&place={{ place }}{% endif %}">hide seen-once noise</a>
+          showing all {{ total_devices }} (incl. low-confidence) ·
+          <a class="link" href="?{% if place %}place={{ place }}{% endif %}">show confident only</a>
         {% endif %}
         </span>
       </h2>
       <table id="devices">
-        <thead><tr><th>Model</th><th>ID/Ch</th><th>Band</th><th>Latest reading</th><th>Count</th><th>Last seen</th><th>Activity</th><th>SNR</th><th>Label / Room / Class</th></tr></thead>
+        <thead><tr><th>Model</th><th>ID/Ch</th><th>Band</th><th>Latest reading</th><th>Conf.</th><th>Count</th><th>Last seen</th><th>Activity</th><th>SNR</th><th>Label / Room / Class</th></tr></thead>
         <tbody>
         {% for d in devices %}
           <tr>
@@ -81,6 +83,11 @@
             <td>{{ d.dev_id }}{% if d.channel %}/{{ d.channel }}{% endif %}</td>
             <td>{{ "%.2f"|format((d.typical_freq_hz or 0) / 1e6) }} MHz</td>
             <td class="reading">{{ readings[d.device_id] or "—" }}</td>
+            {% set c = confidence[d.device_id] %}
+            <td class="conf {{ 'ok' if c.plausible else 'bad' }}"
+                title="{{ c.reasons|join(' · ') }}">
+              {{ "%.2f"|format(c.confidence) }}{% if not c.plausible %} ⚠{% endif %}
+            </td>
             <td>{{ d.count }}</td>
             <td class="muted">{{ d.last_seen or "—" }}</td>
             <td><span class="spark" title="recent activity">{{ sparklines[d.device_id] or "—" }}</span></td>
@@ -98,7 +105,10 @@
             </td>
           </tr>
         {% else %}
-          <tr><td colspan="9" class="muted">No devices yet — set Capture to Decode.</td></tr>
+          <tr><td colspan="10" class="muted">No confident devices{% if hidden_count %}
+            — {{ hidden_count }} low-confidence hidden;
+            <a class="link" href="?show_all=1{% if place %}&place={{ place }}{% endif %}">show all</a>{%
+            else %} yet — set Capture to Decode{% endif %}.</td></tr>
         {% endfor %}
         </tbody>
       </table>

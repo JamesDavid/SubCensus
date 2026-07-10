@@ -45,33 +45,38 @@ def test_index_renders_devices(client):
     assert "Acurite-Tower" in r.text
 
 
-def test_seen_once_noise_filter(tmp_path):
-    """Devices heard exactly once (false-decode noise: fresh random id each time) are hidden by
-    default; min_count=1 shows them (Pi §6). Display-only — nothing is deleted."""
+def test_confidence_gate_hides_implausible(tmp_path):
+    """System §6 honesty gate: physically-implausible / uncorroborated decodes are hidden by
+    default and revealed with show_all. Display-only — nothing is deleted."""
     from subcensuspi.db import Reception
 
     db = Database(tmp_path / "c.db")
-    # a real, repeatedly-heard sensor
-    for _ in range(5):
+    # a real, repeatedly-heard sensor with a sane reading -> confident
+    for _ in range(6):
         db.ingest(Reception(ts="2026-07-09T00:00:00", model="Acurite-Tower", dev_id="1",
                             channel="A", freq_hz=433920000, rssi=-60, snr=12, source="d",
-                            place="home", raw_json='{"model":"Acurite-Tower","temperature_C":21}'))
-    # a phantom: a different Efergy id heard exactly once (classic rtl_433 noise decode)
-    for i in range(3):
-        db.ingest(Reception(ts="2026-07-09T01:00:00", model="Efergy-e2CT", dev_id=str(1000 + i),
-                            channel="", freq_hz=315000000, rssi=-70, snr=10, source="d",
-                            place="home", raw_json='{"model":"Efergy-e2CT","current":96.1}'))
+                            place="home", raw_json='{"model":"Acurite-Tower","temperature_C":21,"humidity":45}'))
+    # a phantom: an Efergy claiming 96 A, heard once -> implausible + uncorroborated
+    db.ingest(Reception(ts="2026-07-09T01:00:00", model="Efergy-e2CT", dev_id="512",
+                        channel="", freq_hz=315000000, rssi=-70, snr=10, source="d",
+                        place="home", raw_json='{"model":"Efergy-e2CT","current":96.1}'))
+    # a phantom: an Opus at its -40 °C null value -> implausible sentinel
+    db.ingest(Reception(ts="2026-07-09T02:00:00", model="Opus-XT300", dev_id="0",
+                        channel="", freq_hz=314990000, rssi=-60, snr=19, source="d",
+                        place="home", raw_json='{"model":"Opus-XT300","moisture":0,"temperature_C":-40}'))
     db.close()
     client = TestClient(create_app(str(tmp_path / "c.db")))
 
-    # default view hides the 3 seen-once phantoms, keeps the real sensor
+    # default view keeps the real sensor, hides both phantoms
     r = client.get("/")
-    assert "Acurite-Tower" in r.text and "Efergy-e2CT" not in r.text
-    assert "3 hidden as seen-once noise" in r.text
+    assert "Acurite-Tower" in r.text
+    assert "Efergy-e2CT" not in r.text and "Opus-XT300" not in r.text
+    assert "2 hidden as low-confidence" in r.text
 
-    # show-all reveals them
-    r_all = client.get("/?min_count=1")
-    assert "Efergy-e2CT" in r_all.text
+    # show-all reveals them, with the why-not reason in the title attribute
+    r_all = client.get("/?show_all=1")
+    assert "Efergy-e2CT" in r_all.text and "Opus-XT300" in r_all.text
+    assert "null value" in r_all.text  # the -40 °C sentinel explanation
     assert "Live feed" in r.text
     assert "weather" in r.text  # taxonomy class in the label picker
     # §7 devices table columns: last-seen + activity sparkline

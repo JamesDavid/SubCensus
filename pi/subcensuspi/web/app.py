@@ -23,6 +23,7 @@ from ..db import Database
 import subprocess
 
 from ..live_sweep import LiveSweeper
+from ..plausibility import assess
 from ..radio import RadioManager
 from ..readings import humanize_reading
 from ..occupancy_pass import (
@@ -125,15 +126,24 @@ def create_app(
         return _Path(app.state.places_dir) / pl
 
     @app.get("/", response_class=HTMLResponse)
-    def index(request: Request, place: str | None = None, min_count: int = 2):
+    def index(request: Request, place: str | None = None, show_all: bool = False):
         db = get_db()
         try:
             p = place or app.state.place
             all_devices = [_row_to_dict(r) for r in db.list_devices(p)]
-            # Hide seen-once devices by default (Pi §6): a periodic sensor heard exactly once over
-            # a long run is almost always a false decode (rtl_433 firing on noise -> a fresh random
-            # id each time). min_count=1 shows everything. This is display-only; nothing is deleted.
-            devices = [d for d in all_devices if (d.get("count") or 0) >= min_count]
+            latest_raw = db.latest_raw_json_by_device(p)
+            # Confidence & honesty gate (System §6): score each decode on physical plausibility +
+            # corroboration; hide the low-confidence junk by default (e.g. an Opus at -40 °C null,
+            # an Efergy at 96 A, a periodic sensor heard once). show_all=1 reveals everything.
+            # Display-only — nothing is deleted or auto-relabeled (§6).
+            assessments = {
+                d["device_id"]: assess(latest_raw.get(d["device_id"]),
+                                       model=d.get("model") or "", count=d.get("count") or 0)
+                for d in all_devices
+            }
+            devices = all_devices if show_all else [
+                d for d in all_devices if assessments[d["device_id"]].plausible
+            ]
             hidden_count = len(all_devices) - len(devices)
             events = [_row_to_dict(r) for r in db.recent_events(30, p)]
             unknowns = [_row_to_dict(r) for r in db.list_unknowns(p)]
@@ -143,11 +153,12 @@ def create_app(
                 for d in devices
             }
             # latest decoded payload per device, humanized (temp/humidity/power/battery…) (Pi §7).
-            latest_raw = db.latest_raw_json_by_device(p)
             readings = {
                 d["device_id"]: humanize_reading(latest_raw.get(d["device_id"]))
                 for d in devices
             }
+            # per-device confidence + why-not reasons for the Confidence column (§6 honesty).
+            confidence = {d["device_id"]: assessments[d["device_id"]].as_dict() for d in devices}
         finally:
             db.close()
         # Bands: occupancy heatmap (ranked hot bins first) + derived watchlist (Pi §7, §9a).
@@ -174,11 +185,12 @@ def create_app(
                 "devices": devices,
                 "total_devices": len(all_devices),
                 "hidden_count": hidden_count,
-                "min_count": min_count,
+                "show_all": show_all,
                 "events": events,
                 "unknowns": unknowns,
                 "sparklines": sparklines,
                 "readings": readings,
+                "confidence": confidence,
                 "occupancy": occupancy,
                 "watchlist": watchlist,
                 "spectrum_json": json.dumps(spectrum),

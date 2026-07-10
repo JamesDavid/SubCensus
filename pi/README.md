@@ -100,10 +100,18 @@ offline), auto-refreshing on a poll. The header shows `place: <active>` and a de
 Everything is **RX-only** — there is no transmit control anywhere in the UI.
 
 - **Devices** (main table) — one row per grouped device: **Model · ID/Ch · Band · Latest reading ·
-  Count · Last seen · Activity · SNR · Label / Room / Class**. **Latest reading** is the decoded
-  payload of that device's most recent reception in plain language — e.g. `temp 21.3°C · humidity
-  45%`, `pressure 230 kPa · temp 22°C`, `power 812 W · battery OK` — so you read *what the device
-  said*, not just that it spoke. The **Activity** column is a unicode-block **sparkline** of the
+  Conf. · Count · Last seen · Activity · SNR · Label / Room / Class**. **Latest reading** is the
+  decoded payload of that device's most recent reception in plain language — e.g. `temp 21.3°C ·
+  humidity 45%`, `pressure 230 kPa · temp 22°C`, `power 812 W · battery OK` — so you read *what the
+  device said*, not just that it spoke. **Conf.** is the System §6 *confidence & honesty* score: a
+  decode is scored on whether its values are physically plausible (an Opus at `-40 °C` is that
+  decoder's raw-zero *null* value; an Efergy at `96 A` is out of range) and how well repeated
+  sightings corroborate it (a periodic sensor heard once is almost always a false decode with a
+  fresh random id). **Low-confidence rows are hidden by default** (header shows how many; "show
+  all" reveals them, each with a hover reason for *why* it's doubted) — so the table shows devices
+  the census is actually sure about, not every noise blip rtl_433 named. It never deletes or
+  auto-relabels (§6): it proposes, you confirm. The **Activity** column is a unicode-block
+  **sparkline** of the
   device's recent reception bins (from the SQLite event log), so you see cadence at a glance. The
   **Label / Room / Class** cell has `label`/`room` inputs + a `device_class` dropdown and a **save**
   button — saving writes the catalog row **and** feeds the global active-learning brain (System §6).
