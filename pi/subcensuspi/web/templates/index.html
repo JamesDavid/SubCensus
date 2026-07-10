@@ -266,11 +266,14 @@
         const id = a.dataset.id;
         fetch('/api/unknown/' + id + '/inspect').then(function (r) { return r.json(); }).then(function (j) {
           const out = document.getElementById('inspect-out');
+          // pulse_summary originates from rtl_433 fields (RF-influenceable) — escape before innerHTML
+          function esc(s) { return String(s).replace(/[&<>"]/g, function (c) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
           const dl = j.download_url
-            ? ' · <a class="link" href="' + j.download_url + '">download IQ (' + j.iq_bytes + ' B)</a>'
-            : ' · no recorded IQ (live capture: TODO(hw))';
-          out.innerHTML = 'unknown #' + j.id + ' @ <code>' + ((j.freq_hz || 0) / 1e6).toFixed(3) +
-            ' MHz</code> · ' + JSON.stringify(j.pulse_summary) + dl;
+            ? ' · <a class="link" href="' + esc(j.download_url) + '">download IQ (' + (j.iq_bytes | 0) + ' B)</a>'
+            : ' · no recorded IQ for this row';
+          out.innerHTML = 'unknown #' + (j.id | 0) + ' @ <code>' + ((j.freq_hz || 0) / 1e6).toFixed(3) +
+            ' MHz</code> · ' + esc(JSON.stringify(j.pulse_summary)) + dl;
         }).catch(function () {});
       });
     });
@@ -435,6 +438,14 @@
       let txt = '';
       if (st.mode === 'decode') {
         txt = st.decode && st.decode.running ? '● decoding (census running)' : 'decode starting…';
+        // Honest health: a live subprocess proves nothing if rtl_433 is crash-looping inside it —
+        // show when we last actually decoded something.
+        if (st.last_event_age_s != null) {
+          const a = st.last_event_age_s;
+          txt += ' · last decode ' + (a < 90 ? a + 's' :
+            a < 5400 ? Math.round(a / 60) + ' min' : Math.round(a / 3600) + ' h') + ' ago';
+        } else { txt += ' · nothing decoded yet'; }
+        out.title = ((st.decode && st.decode.tail) || []).join('\n');  // collector log tail on hover
       } else if (st.mode === 'spectrum') {
         txt = '● live spectrum ' + ((st.spectrum && st.spectrum.range) || '');
       } else { txt = 'radio off (dongle free)'; }

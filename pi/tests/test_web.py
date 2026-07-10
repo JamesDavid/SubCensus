@@ -45,6 +45,60 @@ def test_index_renders_devices(client):
     assert "Acurite-Tower" in r.text
 
 
+def test_recon_parks_and_resumes_radio(tmp_path, monkeypatch):
+    """One radio: a recon sweep must park the current mode (usually decode) and resume it after —
+    otherwise it always fails dongle-busy in normal 24/7 operation (the old two-service reflex)."""
+    import subcensuspi.web.app as webapp
+
+    (tmp_path / "home").mkdir()
+    app = create_app(str(tmp_path / "c.db"), place="home", places_dir=str(tmp_path))
+
+    calls = []
+
+    class StubRadio:
+        def status(self):
+            return {"mode": "decode"}
+
+        def set_mode(self, mode, band=None):
+            calls.append(mode)
+            return {"mode": mode}
+
+    app.state.radio = StubRadio()
+    monkeypatch.setattr(webapp, "rtl_power_available", lambda: True)
+
+    def fake_sweep(out_path, *, freq_range, duration_s):
+        # a real rtl_power CSV line (float step, one hop) so the pass parses it
+        out_path.write_text(
+            "2026-07-08, 17:02:06, 433000000, 434000000, 1000000.00, 1, -95.0, -55.0\n",
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr(webapp, "sweep_live_to_csv", fake_sweep)
+    client = TestClient(app)
+    r = client.post("/api/recon/run", data={"band": "433"})
+    assert r.status_code == 200 and r.json()["ok"] is True
+    assert calls == ["off", "decode"]  # parked for the sweep, census resumed after
+
+
+def test_radio_status_reports_decode_health(tmp_path):
+    """/api/radio carries last_event_age_s — the honest 'is the census actually hearing things'
+    signal (a live collector subprocess proves nothing if rtl_433 crash-loops inside it)."""
+    from subcensuspi.db import Database, Reception
+
+    db = Database(tmp_path / "c.db")
+    db.ingest(Reception(ts="2026-07-09T00:00:00", model="Acurite-Tower", dev_id="1", channel="A",
+                        freq_hz=433920000, rssi=-60, snr=12, source="d", place="home",
+                        raw_json='{"model":"Acurite-Tower","temperature_C":21}'))
+    db.close()
+    client = TestClient(create_app(str(tmp_path / "c.db")))
+    j = client.get("/api/radio").json()
+    assert j["last_event_ts"] == "2026-07-09T00:00:00"
+    assert isinstance(j["last_event_age_s"], int) and j["last_event_age_s"] >= 0
+    # empty catalog -> explicit "nothing decoded yet" signal, not a crash
+    client2 = TestClient(create_app(str(tmp_path / "empty.db")))
+    assert client2.get("/api/radio").json()["last_event_age_s"] is None
+
+
 def test_confidence_gate_hides_implausible(tmp_path):
     """System §6 honesty gate: physically-implausible / uncorroborated decodes are hidden by
     default and revealed with show_all. Display-only — nothing is deleted."""

@@ -131,9 +131,9 @@ def create_app(
         d = place_dir(p)
         return (d / "iq") if d is not None else None
 
-    def _sample_info(f: _Path) -> dict:
+    def _sample_info(f: _Path, base: _Path) -> dict:
         st = f.stat()
-        return {"file": f.name, "bytes": st.st_size,
+        return {"file": f.relative_to(base).as_posix(), "bytes": st.st_size,
                 "mtime": datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds")}
 
     @app.get("/", response_class=HTMLResponse)
@@ -238,8 +238,8 @@ def create_app(
         d = samples_dir(place)
         if d is None or not d.is_dir():
             return []
-        files = sorted(d.glob("*.cu8"), key=lambda f: f.stat().st_mtime, reverse=True)
-        return [_sample_info(f) for f in files[:limit]]
+        files = sorted(d.rglob("*.cu8"), key=lambda f: f.stat().st_mtime, reverse=True)
+        return [_sample_info(f, d) for f in files[:limit]]
 
     @app.post("/api/sample/redecode")
     def api_sample_redecode(file: str = Form(...), place: str = Form(default="")):
@@ -249,8 +249,13 @@ def create_app(
         d = samples_dir(place or None)
         if d is None:
             raise HTTPException(status_code=400, detail="no places_dir configured")
-        path = d / _Path(file).name  # basename only — no path traversal
-        if not path.is_file():
+        # relative path (samples live in per-launch run-* subdirs) — strictly contained in d
+        path = (d / file).resolve()
+        try:
+            path.relative_to(d.resolve())
+        except ValueError:
+            raise HTTPException(status_code=404, detail="sample not found")
+        if path.suffix != ".cu8" or not path.is_file():
             raise HTTPException(status_code=404, detail="sample not found")
         if not rtl433_available():
             raise HTTPException(status_code=503,
@@ -296,7 +301,12 @@ def create_app(
             row = db.get_device(device_id)
             if row is None:
                 raise HTTPException(status_code=404, detail="device not found")
-            device = _row_to_dict(row)
+            # Cadence (§7a — "the Pi is the strongest measurer") was only ever computed by the
+            # offline brain_export CLI, so the catalog columns stayed NULL forever and this page
+            # always showed "—". Refresh it on view: cheap (one device's timestamps) and keeps
+            # the persisted cadence_* columns current for the brain export too.
+            db.update_device_cadence(device_id)
+            device = _row_to_dict(db.get_device(device_id))
             events = [_row_to_dict(e) for e in db.device_events_recent(device_id, limit=500)]
             latest = events[0] if events else None
             candidates = []
@@ -320,9 +330,9 @@ def create_app(
         if sd is not None and sd.is_dir():
             ev_epochs = [t.timestamp() for t in
                          (_parse_ts(e.get("ts") or "") for e in events[:100]) if t is not None]
-            for f in sorted(sd.glob("*.cu8"), key=lambda f: f.stat().st_mtime, reverse=True)[:500]:
+            for f in sorted(sd.rglob("*.cu8"), key=lambda f: f.stat().st_mtime, reverse=True)[:500]:
                 if any(abs(f.stat().st_mtime - t) <= 3 for t in ev_epochs):
-                    samples.append(_sample_info(f))
+                    samples.append(_sample_info(f, sd))
                 if len(samples) >= 20:
                     break
         return TEMPLATES.TemplateResponse(
@@ -498,9 +508,24 @@ def create_app(
 
     @app.get("/api/radio")
     def api_radio_status():
-        """Current radio state: {mode(off|decode|spectrum), band, error, decode{}, spectrum{}}.
-        The dashboard Capture control polls this to show what the single dongle is doing."""
-        return app.state.radio.status()
+        """Current radio state: {mode(off|decode|spectrum), band, error, decode{}, spectrum{}},
+        plus decode HEALTH (last_event_age_s): the collector subprocess can be alive while
+        rtl_433 crash-loops inside it, so "running" alone proves nothing — the age of the last
+        decoded event is the honest signal the census is actually hearing things."""
+        st = app.state.radio.status()
+        db = get_db()
+        try:
+            row = db.conn.execute("SELECT ts FROM events ORDER BY id DESC LIMIT 1").fetchone()
+        finally:
+            db.close()
+        st["last_event_ts"] = row["ts"] if row else None
+        t = _parse_ts(row["ts"]) if row else None
+        if t is not None:
+            now = datetime.now(t.tzinfo) if t.tzinfo else datetime.now()
+            st["last_event_age_s"] = max(0, int((now - t).total_seconds()))
+        else:
+            st["last_event_age_s"] = None
+        return st
 
     @app.post("/api/radio")
     def api_radio_ctl(mode: str = Form(...), band: str = Form(default="")):
@@ -541,6 +566,13 @@ def create_app(
                     status_code=503,
                     detail="rtl_power not installed — run pi/install.sh (installs rtl-sdr).",
                 )
+            # ONE radio: park whatever the radio is doing (usually decode) for the sweep, then
+            # resume it. Without this the sweep always failed dongle-busy in normal 24/7
+            # operation and the user had to juggle the radio by hand.
+            radio = app.state.radio
+            prior = radio.status()["mode"]
+            if prior != "off":
+                radio.set_mode("off")
             try:
                 sweep_live_to_csv(
                     d / "recon_sweep.csv", freq_range=resolve_range(band), duration_s=duration_s
@@ -552,10 +584,15 @@ def create_app(
             except subprocess.CalledProcessError:
                 raise HTTPException(
                     status_code=503,
-                    detail="rtl_power sweep failed — is the dongle free? If the collector is "
-                    "using it, stop it: sudo systemctl stop subcensuspi-collector. If you see "
+                    detail="rtl_power sweep failed — dongle absent or busy. If you see "
                     "usb_claim_interface -6, the DVB driver holds it — pi/install.sh blacklists it.",
                 )
+            finally:
+                if prior != "off":  # put the census back no matter how the sweep ended
+                    try:
+                        radio.set_mode(prior)
+                    except Exception:  # pragma: no cover - resume is best-effort
+                        pass
             src = str(d / "recon_sweep.csv")
         elif not _Path(src).is_file():
             raise HTTPException(status_code=400, detail="rtl_power_csv not found")

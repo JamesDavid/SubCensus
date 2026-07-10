@@ -61,6 +61,23 @@ def test_prune_samples(tmp_path):
     assert prune_samples(tmp_path / "missing") == 0
 
 
+def test_prune_samples_recursive_and_sweeps_empty_run_dirs(tmp_path):
+    """Samples live in per-launch run-* subdirs; prune must recurse and remove emptied run dirs."""
+    import os
+
+    for r in range(2):
+        rd = tmp_path / f"run-{r:08x}"
+        rd.mkdir()
+        for i in range(3):
+            f = rd / f"g00{i}_433.92M_250k.cu8"
+            f.write_bytes(b"x" * 100)
+            os.utime(f, (1000 + r * 10 + i, 1000 + r * 10 + i))
+    removed = prune_samples(tmp_path, max_gb=1, max_files=3)  # keep newest 3
+    assert removed == 3
+    assert len(list(tmp_path.rglob("*.cu8"))) == 3
+    assert not (tmp_path / "run-00000000").exists()  # fully drained -> swept
+
+
 def test_sample_endpoints(tmp_path, monkeypatch):
     place = tmp_path / "home" / "iq"
     place.mkdir(parents=True)

@@ -270,11 +270,16 @@ class Database:
     def unknown_count(self) -> int:
         return self.conn.execute("SELECT COUNT(*) c FROM unknowns").fetchone()["c"]
 
-    def device_event_timestamps(self, device_id: str) -> list[str]:
+    def device_event_timestamps(self, device_id: str, limit: int = 2000) -> list[str]:
+        """A device's reception timestamps, oldest→newest, bounded to the newest `limit`.
+        Unbounded scans melt the dashboard once a 30 s sensor has weeks of history (a month is
+        ~90k rows *per device*, parsed in Python on every index render); the newest 2k events
+        are plenty for both the sparkline and the cadence estimator."""
         rows = self.conn.execute(
-            "SELECT ts FROM events WHERE device_id=? ORDER BY ts", (device_id,)
+            "SELECT ts FROM events WHERE device_id=? ORDER BY id DESC LIMIT ?",
+            (device_id, limit),
         ).fetchall()
-        return [r["ts"] for r in rows]
+        return [r["ts"] for r in reversed(rows)]
 
     def device_events(self, device_id: str) -> list[sqlite3.Row]:
         """All events for a device in reception order (for the differential corpus, §7b)."""

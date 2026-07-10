@@ -139,11 +139,12 @@ def replay_cu8(path: str | Path, extra: list[str] | None = None) -> Iterator[str
 def prune_samples(dir_path: str | Path, max_gb: float = 2.0, max_files: int = 2000) -> int:
     """Rolling window for the -S sample capture: delete oldest .cu8 until under the caps.
     rtl_433 never prunes its own sample files, so an always-on census would eventually fill the
-    SD card; this keeps the newest window (the re-decodable evidence) bounded. Returns #removed."""
+    SD card; this keeps the newest window (the re-decodable evidence) bounded. Recursive —
+    samples live in per-launch run-* subdirs — and empty run dirs are swept. Returns #removed."""
     p = Path(dir_path)
     if not p.is_dir():
         return 0
-    files = sorted(p.glob("*.cu8"), key=lambda f: f.stat().st_mtime)  # oldest first
+    files = sorted(p.rglob("*.cu8"), key=lambda f: f.stat().st_mtime)  # oldest first
     sizes = {f: f.stat().st_size for f in files}
     total = sum(sizes.values())
     removed = 0
@@ -155,22 +156,35 @@ def prune_samples(dir_path: str | Path, max_gb: float = 2.0, max_files: int = 20
             removed += 1
         except OSError:  # pragma: no cover - deleted underneath us
             pass
+    for d in p.glob("run-*"):  # sweep now-empty per-launch dirs
+        try:
+            if d.is_dir() and not any(d.iterdir()):
+                d.rmdir()
+        except OSError:  # pragma: no cover
+            pass
     return removed
 
 
 def stream_live(
     dongle: DongleConfig, capture_dir: str | None = None
 ) -> Iterator[str]:  # pragma: no cover - needs hardware
-    """Spawn rtl_433 on a real dongle and stream JSON. `capture_dir` (if set) becomes the
-    process CWD and enables -S all, so every detected burst lands there as a raw .cu8 sample
-    (pruned to a rolling window). TODO(hw): needs a dongle."""
+    """Spawn rtl_433 on a real dongle and stream JSON. `capture_dir` (if set) enables -S all;
+    every detected burst lands as a raw .cu8 sample (pruned to a rolling window).
+
+    Each launch gets its OWN run-<id> subdir as the rtl_433 CWD: the -S counter restarts at
+    g001 every process launch, so a shared dir means every supervised relaunch silently
+    OVERWRITES the previous run's samples — the evidence trail self-destructs, fastest exactly
+    when rtl_433 is crash-looping. TODO(hw): needs a dongle."""
     if not rtl433_available():
         raise RuntimeError("rtl_433 not installed")
     cwd = None
     if capture_dir:
-        Path(capture_dir).mkdir(parents=True, exist_ok=True)
+        from uuid import uuid4
+
+        run_dir = Path(capture_dir) / f"run-{uuid4().hex[:8]}"
+        run_dir.mkdir(parents=True, exist_ok=True)
         prune_samples(capture_dir)  # each (re)launch trims the window; a janitor covers long runs
-        cwd = capture_dir
+        cwd = str(run_dir)
     proc = subprocess.Popen(
         build_argv(dongle, samples=bool(capture_dir)), stdout=subprocess.PIPE, text=True, cwd=cwd
     )

@@ -110,6 +110,28 @@ def test_detail_shows_nearby_captured_bursts(tmp_path):
     assert "match against all decoders" in r.text
 
 
+def test_detail_page_computes_cadence_on_view(tmp_path):
+    """Cadence (§7a) was only ever computed by the offline CLI, so the column stayed NULL. The
+    detail page now refreshes it on view — a metronomic sensor gets a period, not '—'."""
+    from subcensuspi.db import Database, Reception, device_id_for
+
+    db = Database(tmp_path / "c.db")
+    for i in range(8):  # every 30 s -> periodic cadence
+        db.ingest(Reception(ts=f"2026-07-09T00:{i:02d}:00" if i < 60 else "2026-07-09T01:00:00",
+                            model="Acurite-Tower", dev_id="1", channel="A", freq_hz=433920000,
+                            rssi=-60, snr=12, source="d", place="home",
+                            raw_json='{"model":"Acurite-Tower","temperature_C":21}'))
+    did = device_id_for("Acurite-Tower", "1", "A")
+    assert db.get_device(did)["cadence_class"] is None  # NULL before any view
+    db.close()
+    client = TestClient(create_app(str(tmp_path / "c.db")))
+    assert client.get(f"/device/{did}").status_code == 200
+    # viewing persisted the cadence estimate to the catalog
+    db2 = Database(tmp_path / "c.db")
+    assert db2.get_device(did)["cadence_class"] is not None
+    db2.close()
+
+
 def test_detail_404(tmp_path):
     client = TestClient(create_app(_seed(tmp_path)))
     assert client.get("/device/nope").status_code == 404

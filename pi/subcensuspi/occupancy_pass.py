@@ -139,7 +139,7 @@ def sweep_live_to_csv(
     `duration_s` (multiple passes → real occupancy), integrating `integration_s` per line.
     Raises FileNotFoundError if rtl_power is missing, or subprocess errors on a busy/absent dongle
     (usb_claim_interface -6 => the dvb_usb_rtl28xxu kernel driver still holds the device: blacklist
-    it; or the collector is using the dongle — stop it first)."""
+    it). The caller (the dashboard) parks the radio for the sweep, so the one dongle is free."""
     if not rtl_power_available():
         raise FileNotFoundError("rtl_power not found — install rtl-sdr (sudo apt install rtl-sdr)")
     out_path = Path(out_path)

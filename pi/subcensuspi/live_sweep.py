@@ -39,6 +39,7 @@ class LiveSweeper:
         self._fmin: int | None = None
         self._fmax: int | None = None
         self._error: str | None = None
+        self._stderr_tail: deque = deque(maxlen=5)  # drained continuously — see _drain_stderr
 
     # --- lifecycle ---
 
@@ -65,7 +66,22 @@ class LiveSweeper:
         self._running = True
         self._thread = threading.Thread(target=self._reader, daemon=True)
         self._thread.start()
+        # rtl_power chats on stderr forever; nobody reading it fills the 64 KB pipe and BLOCKS
+        # rtl_power mid-write — the waterfall then freezes with running=True and no error. Drain
+        # it continuously, keeping only the tail for error reporting.
+        self._stderr_tail.clear()
+        threading.Thread(target=self._drain_stderr, args=(self._proc,), daemon=True).start()
         return rng
+
+    def _drain_stderr(self, proc: subprocess.Popen) -> None:
+        try:
+            assert proc.stderr is not None
+            for line in proc.stderr:
+                line = line.strip()
+                if line:
+                    self._stderr_tail.append(line)
+        except Exception:  # pragma: no cover - teardown race
+            pass
 
     def _reader(self) -> None:
         cur_ts: str | None = None
@@ -87,15 +103,11 @@ class LiveSweeper:
             pass
         if cur and cur_ts is not None:
             self._push(cur_ts, cur)
-        # capture why it stopped (busy dongle, etc.) for the UI
+        # capture why it stopped (busy dongle, etc.) for the UI — from the drained stderr tail
         proc = self._proc
         if proc is not None and proc.poll() not in (None, 0):
-            try:
-                err = (proc.stderr.read() if proc.stderr else "") or ""
-            except Exception:  # pragma: no cover
-                err = ""
             with self._lock:
-                self._error = err.strip().splitlines()[-1] if err.strip() else "rtl_power exited"
+                self._error = self._stderr_tail[-1] if self._stderr_tail else "rtl_power exited"
         self._running = False
 
     def _push(self, ts: str, sweep: dict[int, float]) -> None:

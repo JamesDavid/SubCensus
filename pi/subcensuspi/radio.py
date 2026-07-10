@@ -22,7 +22,9 @@ app; the app re-applies the last mode). RX-only throughout — neither mode tran
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -105,12 +107,17 @@ class RadioManager:
         self._tail.clear()
         argv = [sys.executable, "-m", "subcensuspi.collector.main", "--config", self.config_path]
         # Line-buffered combined output so the dashboard can show why decode stopped if it dies.
+        # start_new_session (POSIX): put the collector AND its rtl_433 grandchild in their own
+        # process group, so stopping decode kills the whole tree — a plain terminate() of the
+        # python wrapper orphans rtl_433, which keeps claiming the dongle (usb_claim -6 on the
+        # next mode switch).
         self._proc = subprocess.Popen(
             argv,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+            start_new_session=(os.name == "posix"),
         )
         self._tail_thread = threading.Thread(target=self._drain_tail, args=(self._proc,), daemon=True)
         self._tail_thread.start()
@@ -127,15 +134,28 @@ class RadioManager:
 
     def _stop_decode(self) -> None:
         proc, self._proc = self._proc, None
-        if proc is not None:
-            try:
-                proc.terminate()
-                proc.wait(timeout=5)
-            except Exception:  # pragma: no cover
+        if proc is None:
+            return
+        # Kill the PROCESS GROUP where possible: the collector's rtl_433 grandchild holds the
+        # dongle, and terminating only the python wrapper leaves it orphaned and the radio busy.
+        def _signal_tree(sig) -> None:
+            if os.name == "posix" and hasattr(os, "killpg"):  # pragma: no cover - POSIX only
                 try:
-                    proc.kill()
-                except Exception:
+                    os.killpg(os.getpgid(proc.pid), sig)
+                    return
+                except (ProcessLookupError, PermissionError, OSError):
                     pass
+            (proc.terminate if sig != getattr(signal, "SIGKILL", None) else proc.kill)()
+
+        try:
+            _signal_tree(signal.SIGTERM)
+            proc.wait(timeout=5)
+        except Exception:  # pragma: no cover
+            try:
+                _signal_tree(getattr(signal, "SIGKILL", signal.SIGTERM))
+                proc.wait(timeout=3)
+            except Exception:
+                pass
 
     def after_spectrum_mode(self) -> str:
         """The mode to return to when a spectrum look ends (Pi §3): whatever ran before the sweep
