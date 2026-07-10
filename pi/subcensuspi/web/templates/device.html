@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ device.model }} · SubCensusPi</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; background: #0f1115; color: #e6e6e6; }
+    header { padding: 12px 16px; background: #171a21; border-bottom: 1px solid #2a2f3a; }
+    h1 { font-size: 18px; margin: 0; } .muted { color: #8b93a1; font-size: 12px; }
+    a.link { color: #9fd0ff; text-decoration: none; } a.link:hover { text-decoration: underline; }
+    main { padding: 16px; display: grid; gap: 16px; }
+    section { background: #171a21; border: 1px solid #2a2f3a; border-radius: 8px; padding: 12px; }
+    h2 { font-size: 14px; margin: 0 0 8px; color: #a7b0c0; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid #232833; }
+    th { color: #8b93a1; font-weight: 600; }
+    code { color: #9fd0ff; }
+    .reading { color: #cfe3ff; }
+    .conf { font-variant-numeric: tabular-nums; } .conf.ok { color: #6fd08c; } .conf.bad { color: #e0a03e; }
+    .kv { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; font-size: 13px; }
+    .kv div:nth-child(odd) { color: #8b93a1; }
+    .pill { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11px; }
+    .pill.ok { background: #1e3b28; color: #6fd08c; } .pill.bad { background: #3b301a; color: #e0a03e; }
+    .why { font-size: 11px; color: #c9a86a; margin-top: 4px; }
+    .raw { font-family: monospace; font-size: 11px; color: #7f8ea3; white-space: pre-wrap; word-break: break-all; }
+    .scroll { overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>{{ device.model }}
+      <span class="muted">{{ device.dev_id }}{% if device.channel %}/{{ device.channel }}{% endif %}
+      · {{ "%.2f"|format((device.typical_freq_hz or 0) / 1e6) }} MHz</span>
+    </h1>
+    <div class="muted"><a class="link" href="/">← back to census</a></div>
+  </header>
+  <main>
+    <section>
+      <h2>Device</h2>
+      <div class="kv">
+        <div>Confidence</div><div>
+          <span class="pill {{ 'ok' if assessment.plausible else 'bad' }}">
+            {{ "%.2f"|format(assessment.confidence) }} {{ 'plausible' if assessment.plausible else 'low-confidence' }}
+          </span>
+          {% if assessment.reasons %}<div class="why">{{ assessment.reasons|join(' · ') }}</div>{% endif %}
+        </div>
+        <div>Class</div><div>{{ device.device_class or "—" }}</div>
+        <div>Label / Room</div><div>{{ device.label or "—" }}{% if device.room %} · {{ device.room }}{% endif %}</div>
+        <div>Receptions</div><div>{{ device.count }}</div>
+        <div>First seen</div><div class="muted">{{ device.first_seen or "—" }}</div>
+        <div>Last seen</div><div class="muted">{{ device.last_seen or "—" }}</div>
+        <div>Avg SNR</div><div>{{ "%.1f dB"|format(device.avg_snr) if device.avg_snr is not none else "—" }}</div>
+        <div>Cadence</div><div>{{ device.cadence_class or "—" }}{% if device.period_s %} · ~{{ "%.0f"|format(device.period_s) }} s{% endif %}</div>
+      </div>
+    </section>
+
+    <!-- Candidate fingerprints for the latest burst (System §6 multi-candidate). With all_protocols
+         (-G 4) a single signal can match several decoders; they're ranked by the confidence gate. -->
+    <section>
+      <h2>Candidate fingerprints <span class="muted">what else this signal matches · ranked by confidence</span></h2>
+      {% if candidates|length > 1 %}
+      <table>
+        <thead><tr><th>Model</th><th>ID/Ch</th><th>Freq</th><th>Decoded</th><th>Conf.</th><th>Why doubted</th></tr></thead>
+        <tbody>
+        {% for c in candidates %}
+          <tr>
+            <td>{% if c.device_id == device.device_id %}<strong>{{ c.model }}</strong>{% else %}
+                <a class="link" href="/device/{{ c.device_id }}">{{ c.model }}</a>{% endif %}</td>
+            <td>{{ c.dev_id }}{% if c.channel %}/{{ c.channel }}{% endif %}</td>
+            <td>{{ "%.2f"|format((c.freq_hz or 0) / 1e6) }}</td>
+            <td class="reading">{{ c.reading or "—" }}</td>
+            <td class="conf {{ 'ok' if c.plausible else 'bad' }}">{{ "%.2f"|format(c.confidence) }}</td>
+            <td class="muted">{{ c.reasons|join(' · ') or "—" }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="muted">Only one decoder matched this burst — no competing fingerprints to compare.
+        Enable <code>all_protocols</code> in the config (rtl_433 <code>-G 4</code>) so future bursts
+        are tested against <em>every</em> decoder and their candidates show up here.</div>
+      {% endif %}
+    </section>
+
+    <!-- Full reception log: every communication we've heard from this device (Pi §7). -->
+    <section>
+      <h2>Communications <span class="muted">{{ events|length }} most-recent receptions</span></h2>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>Time</th><th>Freq</th><th>Decoded reading</th><th>SNR</th><th>RSSI</th><th>Source</th><th>Raw</th></tr></thead>
+        <tbody>
+        {% for e in events %}
+          <tr>
+            <td class="muted">{{ e.ts or "—" }}</td>
+            <td>{{ "%.2f"|format((e.freq_hz or 0) / 1e6) }}</td>
+            <td class="reading">{{ e.reading or "—" }}</td>
+            <td>{{ "%.1f"|format(e.snr) if e.snr is not none else "—" }}</td>
+            <td>{{ "%.0f"|format(e.rssi) if e.rssi is not none else "—" }}</td>
+            <td class="muted">{{ e.source or "—" }}</td>
+            <td class="raw">{{ e.raw_json or "" }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="7" class="muted">No receptions logged.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

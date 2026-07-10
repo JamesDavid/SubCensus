@@ -100,7 +100,7 @@ def _run_live(cfg: Config, collector: Collector) -> None:  # pragma: no cover - 
             log.info("SC event=watchlist_priority applied dongles=%d", len(dongles))
     streams = [
         SourceStream(
-            supervise_stream(lambda d=d: stream_live(d)),
+            supervise_stream(lambda d=d: stream_live(d, all_protocols=cfg.all_protocols)),
             d.serial or ",".join(d.freqs),
         )
         for d in dongles

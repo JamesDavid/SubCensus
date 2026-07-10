@@ -213,6 +213,103 @@ def create_app(
             db.close()
         return {"device_id": device_id, "buckets": counts, "sparkline": sparkline(counts)}
 
+    def _rank_candidates(rows) -> list[dict]:
+        """Rank co-burst decodes by the confidence gate (System §6) — the candidate fingerprints
+        for one signal, best first."""
+        out = []
+        for r in rows:
+            d = _row_to_dict(r)
+            a = assess(d.get("raw_json"), model=d.get("model") or "", count=d.get("count") or 0)
+            out.append({
+                "device_id": d.get("device_id"),
+                "model": d.get("model"),
+                "dev_id": d.get("dev_id"),
+                "channel": d.get("channel"),
+                "freq_hz": d.get("freq_hz"),
+                "reading": humanize_reading(d.get("raw_json")),
+                "confidence": a.confidence,
+                "plausible": a.plausible,
+                "reasons": a.reasons,
+            })
+        out.sort(key=lambda c: c["confidence"], reverse=True)
+        return out
+
+    @app.get("/device/{device_id}", response_class=HTMLResponse)
+    def device_detail(request: Request, device_id: str):
+        """Per-device detail page (Pi §7): the full reception log ("every communication we've heard
+        from this device") + the candidate fingerprints for its latest burst, ranked by confidence."""
+        db = get_db()
+        try:
+            row = db.get_device(device_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail="device not found")
+            device = _row_to_dict(row)
+            events = [_row_to_dict(e) for e in db.device_events_recent(device_id, limit=500)]
+            latest = events[0] if events else None
+            candidates = []
+            if latest is not None:
+                candidates = _rank_candidates(
+                    db.signal_candidates(device.get("place"), latest.get("freq_hz") or 0,
+                                         latest.get("ts") or "")
+                )
+        finally:
+            db.close()
+        assessment = assess((latest or {}).get("raw_json") if latest else None,
+                            model=device.get("model") or "", count=device.get("count") or 0)
+        for e in events:  # humanize each reception's decoded payload for the log
+            e["reading"] = humanize_reading(e.get("raw_json"))
+        return TEMPLATES.TemplateResponse(
+            request=request,
+            name="device.html",
+            context={
+                "device": device,
+                "events": events,
+                "candidates": candidates,
+                "assessment": assessment.as_dict(),
+                "classes": class_ids(),
+            },
+        )
+
+    @app.get("/api/device/{device_id}/events")
+    def api_device_events(device_id: str, limit: int = 200):
+        """Every reception logged for a device (Pi §7), newest first, each with its humanized
+        decoded payload — the full "communications" history behind the detail page."""
+        db = get_db()
+        try:
+            if db.get_device(device_id) is None:
+                raise HTTPException(status_code=404, detail="device not found")
+            rows = []
+            for e in db.device_events_recent(device_id, limit):
+                d = _row_to_dict(e)
+                d["reading"] = humanize_reading(d.get("raw_json"))
+                rows.append(d)
+            return rows
+        finally:
+            db.close()
+
+    @app.get("/api/device/{device_id}/candidates")
+    def api_device_candidates(device_id: str):
+        """The candidate fingerprints for this device's latest burst (System §6 multi-candidate):
+        every decoder that matched the same time+frequency, ranked by the confidence gate."""
+        db = get_db()
+        try:
+            row = db.get_device(device_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail="device not found")
+            device = _row_to_dict(row)
+            events = db.device_events_recent(device_id, limit=1)
+            if not events:
+                return {"device_id": device_id, "candidates": []}
+            latest = _row_to_dict(events[0])
+            cands = _rank_candidates(
+                db.signal_candidates(device.get("place"), latest.get("freq_hz") or 0,
+                                     latest.get("ts") or "")
+            )
+        finally:
+            db.close()
+        return {"device_id": device_id, "ts": latest.get("ts"),
+                "freq_hz": latest.get("freq_hz"), "candidates": cands}
+
     @app.get("/api/places")
     def api_places():
         """Distinct places present, plus the configured active place (Pi §9a)."""

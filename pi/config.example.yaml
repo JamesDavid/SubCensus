@@ -6,6 +6,9 @@ dongles:
     ppm: 0
     hop_seconds: 30         # single-dongle hop across the freqs above
 capture_unknowns: false     # save IQ/pulse for undecoded bursts (M4; disk-guarded)
+all_protocols: false        # enable EVERY rtl_433 decoder (-G 4): a burst can match several
+                            # protocols -> candidate fingerprints per signal (System §6). Noisier;
+                            # the dashboard confidence gate filters the junk. Turn on for discovery.
 prioritize_watchlist: false # opt-in: reorder hop/dongle attention by the place watchlist (§3)
 place: home                 # active Place profile (§9a); stamps all records
 places_dir: /var/lib/subcensuspi/places

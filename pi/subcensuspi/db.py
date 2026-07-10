@@ -282,6 +282,36 @@ class Database:
             "SELECT * FROM events WHERE device_id=? ORDER BY id", (device_id,)
         ).fetchall()
 
+    def device_events_recent(self, device_id: str, limit: int = 200) -> list[sqlite3.Row]:
+        """A device's receptions, newest first (for the detail page "communications" log, Pi §7)."""
+        return self.conn.execute(
+            "SELECT * FROM events WHERE device_id=? ORDER BY id DESC LIMIT ?", (device_id, limit)
+        ).fetchall()
+
+    def signal_candidates(
+        self, place: str | None, freq_hz: int, ts: str, bin_hz: int = 60000
+    ) -> list[sqlite3.Row]:
+        """All decodes that landed on the SAME burst — same timestamp, within `bin_hz` of `freq_hz`
+        (System §6 multi-candidate). With rtl_433's full decoder set (-G 4 / all_protocols) one RF
+        burst can match several protocols; each is a separate event row sharing the reception time
+        and frequency. Grouping them back together = the candidate fingerprints for that signal,
+        which the detail page ranks by the confidence gate. Joined to devices for model/id.
+        """
+        lo, hi = freq_hz - bin_hz, freq_hz + bin_hz
+        args: list = [ts, lo, hi]
+        place_clause = ""
+        if place:
+            place_clause = " AND e.place=?"
+            args.append(place)
+        return self.conn.execute(
+            "SELECT e.id, e.ts, e.freq_hz, e.snr, e.rssi, e.source, e.raw_json, e.device_id,"
+            " d.model, d.dev_id, d.channel, d.count"
+            " FROM events e LEFT JOIN devices d ON e.device_id=d.device_id"
+            " WHERE e.ts=? AND e.freq_hz BETWEEN ? AND ?" + place_clause +
+            " GROUP BY e.device_id ORDER BY e.freq_hz",
+            args,
+        ).fetchall()
+
     def unknown_timestamps(self, place: str, freq_hz: int) -> list[str]:
         """Capture times of every unknown burst at a (place, freq) — the reception history a
         repeatedly-heard unknown signal accrues (feeds its cadence, §7a)."""

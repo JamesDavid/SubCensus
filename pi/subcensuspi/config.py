@@ -36,6 +36,8 @@ class WebConfig:
 class Config:
     dongles: list[DongleConfig] = field(default_factory=lambda: [DongleConfig()])
     capture_unknowns: bool = False
+    all_protocols: bool = False  # enable EVERY rtl_433 decoder (-G 4): more candidate decodes per
+    #                              burst (multi-candidate, §6), more noise — the confidence gate filters
     prioritize_watchlist: bool = False  # opt-in: reorder hop/dongle attention by watchlist (§3)
     place: str = "home"
     places_dir: str = "/var/lib/subcensuspi/places"
@@ -77,6 +79,7 @@ class Config:
         return cls(
             dongles=dongles,
             capture_unknowns=bool(data.get("capture_unknowns", False)),
+            all_protocols=bool(data.get("all_protocols", False)),
             prioritize_watchlist=bool(data.get("prioritize_watchlist", False)),
             place=str(data.get("place", "home")),
             places_dir=str(data.get("places_dir", "/var/lib/subcensuspi/places")),

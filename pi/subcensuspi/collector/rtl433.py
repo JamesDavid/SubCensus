@@ -70,16 +70,25 @@ def supervise_stream(
         delay = min(delay * 2, backoff_max_s)
 
 
-def build_argv(dongle: DongleConfig, extra: list[str] | None = None) -> list[str]:
+def build_argv(
+    dongle: DongleConfig, extra: list[str] | None = None, all_protocols: bool = False
+) -> list[str]:
     """Baseline decode stream (Pi §4). Multi-freq hop when >1 freq configured.
 
     Matches the §4 baseline: -M time:iso:tz -M level -M protocol -M stats (periodic health)
     plus -Y autolevel (adaptive detection level).
+
+    `all_protocols` adds ``-G 4`` — enable EVERY rtl_433 decoder, not just the default set. That
+    makes rtl_433 emit *every* protocol that matches a burst (multi-candidate decode, System §6),
+    so the same signal can surface several candidate fingerprints. It is noisier (flaky decoders
+    fire on RF hash); the confidence gate (`plausibility.py`) is what keeps that honest.
     """
     argv = [
         "rtl_433", "-F", "json",
         "-M", "time:iso:tz", "-M", "level", "-M", "protocol", "-M", "stats",
     ]
+    if all_protocols:
+        argv += ["-G", "4"]  # enable all decoders -> all candidate matches per burst
     if dongle.serial:
         argv += ["-d", f":{dongle.serial}"]
     for f in dongle.freqs:
@@ -117,11 +126,15 @@ def replay_cu8(path: str | Path, extra: list[str] | None = None) -> Iterator[str
     proc.wait()
 
 
-def stream_live(dongle: DongleConfig) -> Iterator[str]:  # pragma: no cover - needs hardware
+def stream_live(
+    dongle: DongleConfig, all_protocols: bool = False
+) -> Iterator[str]:  # pragma: no cover - needs hardware
     """Spawn rtl_433 on a real dongle and stream JSON. TODO(hw): needs a dongle."""
     if not rtl433_available():
         raise RuntimeError("rtl_433 not installed")
-    proc = subprocess.Popen(build_argv(dongle), stdout=subprocess.PIPE, text=True)
+    proc = subprocess.Popen(
+        build_argv(dongle, all_protocols=all_protocols), stdout=subprocess.PIPE, text=True
+    )
     assert proc.stdout is not None
     try:
         for line in proc.stdout:
