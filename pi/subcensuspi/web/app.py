@@ -161,7 +161,9 @@ def create_app(
             confidence = {d["device_id"]: assessments[d["device_id"]].as_dict() for d in devices}
         finally:
             db.close()
-        # Bands: occupancy heatmap (ranked hot bins first) + derived watchlist (Pi §7, §9a).
+        # Bands: occupancy heatmap + derived watchlist (Pi §7, §9a). Only surface bins that were
+        # actually ACTIVE — a wall of 0%-occupancy bins is just the dongle's noise floor, not
+        # signals, so it's dropped (that's the persistent "302–925 MHz rainbow" of nothing).
         d = place_dir(place)
         occupancy = []
         if d is not None:
@@ -169,12 +171,15 @@ def create_app(
                 {"freq_hz": b.freq_hz, "noise_floor": b.noise_floor, "peak_rssi": b.peak_rssi,
                  "occupancy": b.occupancy, "crossings": b.crossings, "last_seen": b.last_seen}
                 for b in read_occupancy_csv(d / "occupancy.csv")
+                if (b.occupancy or 0) > 0 or (b.crossings or 0) > 0
             ]
             occupancy.sort(key=lambda r: r["occupancy"], reverse=True)
+        has_activity = len(occupancy) > 0
         watchlist = read_watchlist_rows(d / "watchlist.csv") if d is not None else []
-        # Waterfall: the rolling window of downsampled rtl_power sweeps (freq x time, §7 tier 2).
+        # Waterfall: the downsampled rtl_power sweeps (freq x time, §7 tier 2). Don't paint the
+        # static noise-floor rainbow when nothing was active — the canvas stays empty for LIVE use.
         spectrum = {"freqs": [], "sweeps": []}
-        if d is not None:
+        if d is not None and has_activity:
             bfreqs, rows = read_spectrum_csv(d / "spectrum.csv")
             spectrum = {"freqs": bfreqs,
                         "sweeps": [{"ts": ts, "dbm": dbm} for ts, dbm in rows]}

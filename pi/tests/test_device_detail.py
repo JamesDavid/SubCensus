@@ -26,7 +26,8 @@ def test_baseline_keeps_raw_bits():
 
 def test_config_parses_all_protocols():
     assert Config.from_dict({"all_protocols": True}).all_protocols is True
-    assert Config.from_dict({}).all_protocols is False
+    assert Config.from_dict({"all_protocols": False}).all_protocols is False
+    assert Config.from_dict({}).all_protocols is True  # DEFAULT ON: match every fingerprint
 
 
 def _seed(tmp_path):
