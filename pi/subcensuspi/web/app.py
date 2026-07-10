@@ -545,12 +545,14 @@ def create_app(
         return st
 
     @app.post("/api/radio")
-    def api_radio_ctl(mode: str = Form(...), band: str = Form(default="")):
-        """Switch the dongle between off / decode / spectrum (mutually exclusive — one radio).
-        `decode` runs the collector (census); `spectrum` runs the live waterfall on `band`."""
+    def api_radio_ctl(mode: str = Form(...), band: str = Form(default=""),
+                      freq: str = Form(default="")):
+        """Switch the dongle between off / decode / spectrum / camp (mutually exclusive — one
+        radio). `decode` = the census hop set; `spectrum` = live waterfall on `band`; `camp` =
+        decode a single recon-found `freq` (Hz or 433.92M), no hop."""
         radio = app.state.radio
         try:
-            return radio.set_mode(mode, band=band or None)
+            return radio.set_mode(mode, band=band or None, freq=freq or None)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except FileNotFoundError as e:  # rtl_power missing (spectrum)

@@ -184,6 +184,7 @@
             <td>
               <button class="ghost pin-btn" data-freq="{{ b.freq_hz }}" data-action="pin">pin</button>
               <button class="ghost pin-btn" data-freq="{{ b.freq_hz }}" data-action="exclude">exclude</button>
+              <button class="camp-btn" data-freq="{{ b.freq_hz }}" title="tune decode to this frequency and catch everything on it">📷 camp here</button>
             </td>
           </tr>
         {% else %}
@@ -194,7 +195,7 @@
       {% if watchlist %}
       <h2 style="margin-top:12px">Watchlist</h2>
       <table id="watchlist">
-        <thead><tr><th>Freq</th><th>Modulation</th><th>Threshold</th><th>Occupancy</th><th>Source</th></tr></thead>
+        <thead><tr><th>Freq</th><th>Modulation</th><th>Threshold</th><th>Occupancy</th><th>Source</th><th></th></tr></thead>
         <tbody>
         {% for w in watchlist %}
           <tr>
@@ -203,6 +204,7 @@
             <td class="muted">{{ w.threshold_dbm }} dBm</td>
             <td>{{ w.occupancy }}</td>
             <td class="muted">{{ w.source }}</td>
+            <td><button class="camp-btn" data-freq="{{ w.freq_hz|int }}" title="tune decode to this frequency">📷 camp here</button></td>
           </tr>
         {% endfor %}
         </tbody>
@@ -282,6 +284,25 @@
         fetch('/api/watchlist/pin', { method: 'POST',
           body: placeBody({ freq_hz: btn.dataset.freq, action: btn.dataset.action }) })
           .then(function (r) { if (r.ok) location.reload(); else alert('pin failed'); });
+      });
+    });
+    // Camp here: tune decode to this recon-found frequency (Pi §3, the Zero/ESP camp flow, RX-only).
+    document.querySelectorAll('.camp-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const mhz = (parseFloat(btn.dataset.freq) / 1e6).toFixed(3);
+        btn.disabled = true; btn.textContent = 'camping…';
+        fetch('/api/radio', { method: 'POST',
+            body: new URLSearchParams({ mode: 'camp', freq: btn.dataset.freq }) })
+          .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; },
+                                                    function () { return { ok: false, j: {} }; }); })
+          .then(function (res) {
+            btn.disabled = false; btn.textContent = '📷 camp here';
+            const el = document.getElementById('recon-out');
+            if (!res.ok) { el.style.color = '#f0a0a0'; el.textContent = 'camp failed: ' + (res.j.detail || 'error'); return; }
+            el.style.color = '#6fd08c';
+            el.textContent = '● camped on ' + mhz + ' MHz — watch the Live feed; Capture ▸ Decode returns to the census.';
+            radioPoll();
+          });
       });
     });
     function recon(out, url, extra) {
@@ -434,8 +455,14 @@
         if (b) b.classList.toggle('ghost', st.mode !== m);  // active mode = solid, others = ghost
       });
       let txt = '';
-      if (st.mode === 'decode') {
-        txt = st.decode && st.decode.running ? '● decoding (census running)' : 'decode starting…';
+      if (st.mode === 'decode' || st.mode === 'camp') {
+        const running = st.decode && st.decode.running;
+        if (st.mode === 'camp') {
+          const mhz = (parseFloat(st.camp_freq) > 1e6) ? (parseFloat(st.camp_freq) / 1e6).toFixed(3) + ' MHz' : st.camp_freq;
+          txt = (running ? '● camped on ' : 'camp starting… ') + mhz;
+        } else {
+          txt = running ? '● decoding (census running)' : 'decode starting…';
+        }
         // Honest health: a live subprocess proves nothing if rtl_433 is crash-looping inside it —
         // show when we last actually decoded something.
         if (st.last_event_age_s != null) {

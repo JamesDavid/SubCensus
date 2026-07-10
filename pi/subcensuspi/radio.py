@@ -31,7 +31,7 @@ import threading
 from collections import deque
 from pathlib import Path
 
-MODES = ("off", "decode", "spectrum")
+MODES = ("off", "decode", "spectrum", "camp")
 
 
 class RadioManager:
@@ -44,6 +44,7 @@ class RadioManager:
         self.state_path = state_path  # JSON file remembering the last mode (for boot resume)
         self._mode = "off"
         self._band = "ism"
+        self._camp_freq: str | None = None  # the frequency 'camp' decodes (Pi §3)
         self._proc: subprocess.Popen | None = None  # decode subprocess
         self._tail: deque = deque(maxlen=25)  # last decode stdout/stderr lines (for status)
         self._tail_thread: threading.Thread | None = None
@@ -62,18 +63,21 @@ class RadioManager:
 
     # --- mode control ---
 
-    def set_mode(self, mode: str, band: str | None = None) -> dict:
-        """Switch the radio to `mode` (off|decode|spectrum). Stops whatever was running first,
-        so only one thing ever claims the dongle. Returns status(). Raises ValueError on a bad
-        mode, FileNotFoundError / RuntimeError when the requested mode can't start."""
+    def set_mode(self, mode: str, band: str | None = None, freq: str | None = None) -> dict:
+        """Switch the radio to `mode` (off|decode|spectrum|camp). Stops whatever was running first,
+        so only one thing ever claims the dongle. `camp` decodes a single `freq` (a recon-found hot
+        band); `spectrum` uses `band`. Returns status(). Raises ValueError on a bad mode,
+        FileNotFoundError / RuntimeError when the requested mode can't start."""
         if mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}")
+        if mode == "camp" and not (freq or self._camp_freq):
+            raise ValueError("camp needs a freq (e.g. 433.92M or a Hz integer)")
         with self._lock:
-            # A spectrum look is usually a detour from the 24/7 census — remember what was
-            # running so stopping the waterfall can resume it instead of leaving the radio off.
-            if mode == "spectrum" and self._mode != "spectrum":
+            # A spectrum/camp look is usually a detour from the 24/7 census — remember what was
+            # running so ending it can resume the census instead of leaving the radio off.
+            if mode in ("spectrum", "camp") and self._mode not in ("spectrum", "camp"):
                 self._mode_before_spectrum = self._mode
-            elif mode != "spectrum":
+            elif mode not in ("spectrum", "camp"):
                 self._mode_before_spectrum = "off"
             # Always tear the radio down to idle before bringing the new mode up.
             self._stop_decode()
@@ -81,6 +85,8 @@ class RadioManager:
             self._last_error = None
             if band:
                 self._band = band
+            if freq:
+                self._camp_freq = freq
             if mode == "off":
                 self._mode = "off"
             elif mode == "spectrum":
@@ -91,10 +97,13 @@ class RadioManager:
             elif mode == "decode":
                 self._start_decode()
                 self._mode = "decode"
+            elif mode == "camp":
+                self._start_decode(camp_freq=self._camp_freq)
+                self._mode = "camp"
             self._persist()
             return self.status()
 
-    def _start_decode(self) -> None:
+    def _start_decode(self, camp_freq: str | None = None) -> None:
         if not self.config_path or not Path(self.config_path).is_file():
             raise RuntimeError(
                 "decode needs a collector config — set SUBCENSUSPI_CONFIG to your config.yaml "
@@ -106,6 +115,8 @@ class RadioManager:
             )
         self._tail.clear()
         argv = [sys.executable, "-m", "subcensuspi.collector.main", "--config", self.config_path]
+        if camp_freq:  # camp: decode a single recon-found frequency, no hop
+            argv += ["--camp-freq", str(camp_freq)]
         # Line-buffered combined output so the dashboard can show why decode stopped if it dies.
         # start_new_session (POSIX): put the collector AND its rtl_433 grandchild in their own
         # process group, so stopping decode kills the whole tree — a plain terminate() of the
@@ -176,13 +187,13 @@ class RadioManager:
             mode = self._mode
             error = self._last_error
             decode_running = False
-            if mode == "decode":
+            if mode in ("decode", "camp"):  # camp is a decode subprocess tuned to one freq
                 if self._decode_alive():
                     decode_running = True
                 else:  # subprocess exited on its own — decode is effectively off
                     rc = self._proc.poll() if self._proc is not None else None
                     tail = " | ".join(list(self._tail)[-3:]) or "collector exited"
-                    error = f"decode stopped (rc={rc}): {tail}"
+                    error = f"{mode} stopped (rc={rc}): {tail}"
                     mode = "off"
                     self._mode = "off"
             spectrum = self.live.snapshot()
@@ -195,6 +206,7 @@ class RadioManager:
             return {
                 "mode": mode,
                 "band": self._band,
+                "camp_freq": self._camp_freq,
                 "error": error,
                 "decode": {
                     "running": decode_running,
@@ -217,7 +229,10 @@ class RadioManager:
         try:
             p = Path(self.state_path)
             p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(json.dumps({"mode": self._mode, "band": self._band}), encoding="utf-8")
+            p.write_text(
+                json.dumps({"mode": self._mode, "band": self._band, "camp_freq": self._camp_freq}),
+                encoding="utf-8",
+            )
         except OSError:  # pragma: no cover - best-effort; a read-only FS just loses resume
             pass
 
@@ -247,11 +262,13 @@ class RadioManager:
             return
         mode = saved.get("mode", "off")
         band = saved.get("band", "ism")
+        freq = saved.get("camp_freq")
+        self._camp_freq = freq
         if mode not in MODES or mode == "off":
             self._band = band or "ism"
             return
         try:
-            self.set_mode(mode, band=band)
+            self.set_mode(mode, band=band, freq=freq)
         except Exception as exc:  # dongle absent / rtl tools missing at boot — stay off, note why
             with self._lock:
                 self._mode = "off"

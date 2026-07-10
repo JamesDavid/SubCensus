@@ -21,6 +21,28 @@ def test_live_argv_has_no_undocumented_flags():
     assert "-G" not in build_argv(dc, samples=True)
 
 
+def test_camp_freq_overrides_hop_set(tmp_path):
+    """--camp-freq collapses the dongle to a single frequency, no hop (the camp flow)."""
+    import yaml
+
+    from subcensuspi.collector import main as cmain
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(yaml.safe_dump({
+        "dongles": [{"freqs": ["433.92M", "915M", "315M"]}],
+        "db_path": str(tmp_path / "c.db"),
+    }))
+    from subcensuspi.config import Config
+    cfg = Config.load(cfg_path)
+    assert cfg.dongles[0].freqs == ["433.92M", "915M", "315M"]
+    # emulate main()'s camp override
+    cfg.dongles = [cfg.dongles[0]]
+    for d in cfg.dongles:
+        d.freqs = ["315M"]
+    from subcensuspi.collector.rtl433 import build_argv
+    argv = build_argv(cfg.dongles[0])
+    assert argv.count("-f") == 1 and "315M" in argv and "-H" not in argv  # single freq, no hop
+
+
 def test_samples_flag_in_argv():
     dc = DongleConfig(freqs=["433.92M"])
     assert "-S" not in build_argv(dc)  # off unless a capture dir is set

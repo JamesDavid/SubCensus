@@ -40,7 +40,7 @@ class FakeLive:
 
 
 def test_modes_constant():
-    assert MODES == ("off", "decode", "spectrum")
+    assert MODES == ("off", "decode", "spectrum", "camp")
 
 
 def test_off_is_idle():
@@ -68,6 +68,48 @@ def test_spectrum_starts_and_is_exclusive():
     # switching to off stops the sweep (one radio)
     st = r.set_mode("off")
     assert st["mode"] == "off" and live.running is False
+
+
+def test_camp_needs_a_freq():
+    r = RadioManager(FakeLive())
+    try:
+        r.set_mode("camp")  # no freq, none remembered
+        assert False, "expected ValueError"
+    except ValueError:
+        pass
+
+
+def test_camp_mode_persists_freq_and_resumes(tmp_path):
+    """Camp = decode tuned to one recon-found freq. It records the freq, persists it, resumes it,
+    and passes --camp-freq to the collector (asserted here by stubbing the subprocess launch)."""
+    import json as _json
+
+    state = tmp_path / "radio_state.json"
+    r = RadioManager(FakeLive(), state_path=str(state))
+    started = []
+    r._start_decode = lambda camp_freq=None: started.append(camp_freq)  # stub the subprocess
+    r._decode_alive = lambda: True  # pretend the (stubbed) collector is alive
+    st = r.set_mode("camp", freq="433.92M")
+    assert st["mode"] == "camp" and st["camp_freq"] == "433.92M"
+    assert started == ["433.92M"]  # collector launched camped on the freq
+    saved = _json.loads(state.read_text())
+    assert saved["mode"] == "camp" and saved["camp_freq"] == "433.92M"
+    # a fresh manager resumes camp on the same freq after a restart
+    r2 = RadioManager(FakeLive(), state_path=str(state))
+    started2 = []
+    r2._start_decode = lambda camp_freq=None: started2.append(camp_freq)
+    r2._decode_alive = lambda: True
+    r2.resume()
+    assert r2.status()["mode"] == "camp" and started2 == ["433.92M"]
+
+
+def test_camp_ends_back_to_census():
+    r = RadioManager(FakeLive())
+    r._start_decode = lambda camp_freq=None: None  # stub
+    r._decode_alive = lambda: True
+    r.set_mode("decode")           # census running
+    r.set_mode("camp", freq="315M")  # detour to camp
+    assert r.after_spectrum_mode() == "decode"  # ending camp resumes the census
 
 
 def test_teardown_does_not_persist_off(tmp_path):
@@ -128,7 +170,7 @@ def test_persist_and_resume(tmp_path):
     r = RadioManager(live, state_path=str(state))
     r.set_mode("spectrum", band="315")
     saved = json.loads(state.read_text())
-    assert saved == {"mode": "spectrum", "band": "315"}
+    assert saved == {"mode": "spectrum", "band": "315", "camp_freq": None}
     # a fresh manager resumes the persisted spectrum mode from disk
     live2 = FakeLive()
     r2 = RadioManager(live2, state_path=str(state))

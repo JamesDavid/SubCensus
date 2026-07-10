@@ -56,10 +56,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--replay", help="recorded rtl_433 .jsonl to feed the collector (no hw)")
     ap.add_argument("--replay-cu8", help="recorded .cu8/.ook IQ to replay via rtl_433 -r")
     ap.add_argument("--db", help="override db_path")
+    ap.add_argument("--camp-freq", help="CAMP: decode a single frequency (Hz or e.g. 433.92M), "
+                    "no hop — sit on a recon-found hot band and catch everything on it (Pi §3)")
     args = ap.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     cfg = Config.load(args.config)
+    if args.camp_freq:  # camp overrides the hop set: one dongle, one freq, no hopping
+        cfg.dongles = [cfg.dongles[0]] if cfg.dongles else cfg.dongles
+        for d in cfg.dongles:
+            d.freqs = [args.camp_freq]
+        log.info("SC event=camp freq=%s", args.camp_freq)
     db = Database(args.db or cfg.db_path)
     mqtt = _make_mqtt(cfg)
     from ..brain import Brain
