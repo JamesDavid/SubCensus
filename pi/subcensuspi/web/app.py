@@ -125,11 +125,16 @@ def create_app(
         return _Path(app.state.places_dir) / pl
 
     @app.get("/", response_class=HTMLResponse)
-    def index(request: Request, place: str | None = None):
+    def index(request: Request, place: str | None = None, min_count: int = 2):
         db = get_db()
         try:
             p = place or app.state.place
-            devices = [_row_to_dict(r) for r in db.list_devices(p)]
+            all_devices = [_row_to_dict(r) for r in db.list_devices(p)]
+            # Hide seen-once devices by default (Pi §6): a periodic sensor heard exactly once over
+            # a long run is almost always a false decode (rtl_433 firing on noise -> a fresh random
+            # id each time). min_count=1 shows everything. This is display-only; nothing is deleted.
+            devices = [d for d in all_devices if (d.get("count") or 0) >= min_count]
+            hidden_count = len(all_devices) - len(devices)
             events = [_row_to_dict(r) for r in db.recent_events(30, p)]
             unknowns = [_row_to_dict(r) for r in db.list_unknowns(p)]
             # per-device activity sparkline from the events log (Pi §7), rendered server-side.
@@ -167,6 +172,9 @@ def create_app(
             name="index.html",
             context={
                 "devices": devices,
+                "total_devices": len(all_devices),
+                "hidden_count": hidden_count,
+                "min_count": min_count,
                 "events": events,
                 "unknowns": unknowns,
                 "sparklines": sparklines,

@@ -43,6 +43,35 @@ def test_index_renders_devices(client):
     r = client.get("/")
     assert r.status_code == 200
     assert "Acurite-Tower" in r.text
+
+
+def test_seen_once_noise_filter(tmp_path):
+    """Devices heard exactly once (false-decode noise: fresh random id each time) are hidden by
+    default; min_count=1 shows them (Pi §6). Display-only — nothing is deleted."""
+    from subcensuspi.db import Reception
+
+    db = Database(tmp_path / "c.db")
+    # a real, repeatedly-heard sensor
+    for _ in range(5):
+        db.ingest(Reception(ts="2026-07-09T00:00:00", model="Acurite-Tower", dev_id="1",
+                            channel="A", freq_hz=433920000, rssi=-60, snr=12, source="d",
+                            place="home", raw_json='{"model":"Acurite-Tower","temperature_C":21}'))
+    # a phantom: a different Efergy id heard exactly once (classic rtl_433 noise decode)
+    for i in range(3):
+        db.ingest(Reception(ts="2026-07-09T01:00:00", model="Efergy-e2CT", dev_id=str(1000 + i),
+                            channel="", freq_hz=315000000, rssi=-70, snr=10, source="d",
+                            place="home", raw_json='{"model":"Efergy-e2CT","current":96.1}'))
+    db.close()
+    client = TestClient(create_app(str(tmp_path / "c.db")))
+
+    # default view hides the 3 seen-once phantoms, keeps the real sensor
+    r = client.get("/")
+    assert "Acurite-Tower" in r.text and "Efergy-e2CT" not in r.text
+    assert "3 hidden as seen-once noise" in r.text
+
+    # show-all reveals them
+    r_all = client.get("/?min_count=1")
+    assert "Efergy-e2CT" in r_all.text
     assert "Live feed" in r.text
     assert "weather" in r.text  # taxonomy class in the label picker
     # §7 devices table columns: last-seen + activity sparkline

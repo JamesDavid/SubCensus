@@ -33,7 +33,9 @@
 <body>
   <header>
     <h1>SubCensusPi <span class="muted">place: {{ place or "all" }}</span></h1>
-    <div class="muted">Wideband RTL-SDR ISM census — RX only. {{ devices|length }} devices.</div>
+    <div class="muted">Wideband RTL-SDR ISM census — RX only.
+      {{ devices|length }} device{{ '' if devices|length == 1 else 's' }}{% if hidden_count %}
+      shown · {{ hidden_count }} hidden as seen-once noise{% endif %}.</div>
   </header>
   <main>
     <!-- Capture: the one web-controlled radio owner (Pi §3, §9). One dongle, one mode at a time. -->
@@ -59,7 +61,17 @@
       </div>
     </section>
     <section>
-      <h2>Devices</h2>
+      <h2>Devices
+        <span class="muted">
+        {% if min_count > 1 %}
+          hiding {{ hidden_count }} seen-once (likely false decodes) ·
+          <a class="link" href="?min_count=1{% if place %}&place={{ place }}{% endif %}">show all {{ total_devices }}</a>
+        {% else %}
+          showing all {{ total_devices }} ·
+          <a class="link" href="?min_count=2{% if place %}&place={{ place }}{% endif %}">hide seen-once noise</a>
+        {% endif %}
+        </span>
+      </h2>
       <table id="devices">
         <thead><tr><th>Model</th><th>ID/Ch</th><th>Band</th><th>Latest reading</th><th>Count</th><th>Last seen</th><th>Activity</th><th>SNR</th><th>Label / Room / Class</th></tr></thead>
         <tbody>
