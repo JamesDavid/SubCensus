@@ -24,6 +24,7 @@ import subprocess
 
 from ..live_sweep import LiveSweeper
 from ..radio import RadioManager
+from ..readings import humanize_reading
 from ..occupancy_pass import (
     SWEEP_PRESETS,
     read_occupancy_csv,
@@ -136,6 +137,12 @@ def create_app(
                 d["device_id"]: sparkline(activity_buckets(db.device_event_timestamps(d["device_id"])))
                 for d in devices
             }
+            # latest decoded payload per device, humanized (temp/humidity/power/battery…) (Pi §7).
+            latest_raw = db.latest_raw_json_by_device(p)
+            readings = {
+                d["device_id"]: humanize_reading(latest_raw.get(d["device_id"]))
+                for d in devices
+            }
         finally:
             db.close()
         # Bands: occupancy heatmap (ranked hot bins first) + derived watchlist (Pi §7, §9a).
@@ -163,6 +170,7 @@ def create_app(
                 "events": events,
                 "unknowns": unknowns,
                 "sparklines": sparklines,
+                "readings": readings,
                 "occupancy": occupancy,
                 "watchlist": watchlist,
                 "spectrum_json": json.dumps(spectrum),
@@ -209,7 +217,12 @@ def create_app(
     def api_events(limit: int = 50, place: str | None = None):
         db = get_db()
         try:
-            return [_row_to_dict(r) for r in db.recent_events(limit, place or app.state.place)]
+            rows = []
+            for r in db.recent_events(limit, place or app.state.place):
+                d = _row_to_dict(r)
+                d["reading"] = humanize_reading(d.get("raw_json"))  # decoded payload, humanized
+                rows.append(d)
+            return rows
         finally:
             db.close()
 

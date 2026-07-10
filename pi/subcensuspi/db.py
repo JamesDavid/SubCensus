@@ -210,6 +210,22 @@ class Database:
             ).fetchall()
         return self.conn.execute("SELECT * FROM devices ORDER BY last_seen DESC").fetchall()
 
+    def latest_raw_json_by_device(self, place: str | None = None) -> dict[str, str]:
+        """The most recent event's raw rtl_433 JSON for each device (one query). Drives the
+        Devices "Latest reading" column (Pi §7) — the human-readable decoded payload per device."""
+        sql = (
+            "SELECT e.device_id AS did, e.raw_json AS raw_json FROM events e"
+            " JOIN (SELECT device_id, MAX(id) AS mid FROM events{where} GROUP BY device_id) m"
+            " ON e.id = m.mid"
+        )
+        if place:
+            rows = self.conn.execute(
+                sql.format(where=" WHERE place=?"), (place,)
+            ).fetchall()
+        else:
+            rows = self.conn.execute(sql.format(where="")).fetchall()
+        return {r["did"]: r["raw_json"] for r in rows if r["raw_json"]}
+
     def recent_events(self, limit: int = 50, place: str | None = None) -> list[sqlite3.Row]:
         if place:
             return self.conn.execute(

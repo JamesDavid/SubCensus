@@ -99,15 +99,19 @@ Open `http://<host>:8080/`. It's a **single self-hosted page** (no external JS/C
 offline), auto-refreshing on a poll. The header shows `place: <active>` and a device count.
 Everything is **RX-only** — there is no transmit control anywhere in the UI.
 
-- **Devices** (main table) — one row per grouped device: **Model · ID/Ch · Band · Count · Last
-  seen · Activity · SNR · Label / Room / Class**. The **Activity** column is a unicode-block
-  **sparkline** of that device's recent reception bins (straight from the SQLite event log), so
-  you can see cadence at a glance. The **Label / Room / Class** cell has `label`/`room` inputs + a
-  `device_class` dropdown and a **save** button — saving writes the catalog row **and** feeds the
-  global active-learning brain (System §6). This is the everyday "identify what's around me" view.
+- **Devices** (main table) — one row per grouped device: **Model · ID/Ch · Band · Latest reading ·
+  Count · Last seen · Activity · SNR · Label / Room / Class**. **Latest reading** is the decoded
+  payload of that device's most recent reception in plain language — e.g. `temp 21.3°C · humidity
+  45%`, `pressure 230 kPa · temp 22°C`, `power 812 W · battery OK` — so you read *what the device
+  said*, not just that it spoke. The **Activity** column is a unicode-block **sparkline** of the
+  device's recent reception bins (from the SQLite event log), so you see cadence at a glance. The
+  **Label / Room / Class** cell has `label`/`room` inputs + a `device_class` dropdown and a **save**
+  button — saving writes the catalog row **and** feeds the global active-learning brain (System §6).
+  This is the everyday "identify what's around me" view.
 - **Live feed** (right column) — the newest decoded events as they land (`time · freq · model ·
-  SNR`, plus `room` when the device is labeled), newest first. Confirms the collector is hearing
-  things without reloading.
+  SNR · decoded reading`, plus `room` when the device is labeled), newest first. The decoded
+  reading is the same humanized payload (temp/humidity/power/battery…). Confirms decode mode is
+  hearing things without reloading.
 - **Unknowns — review queue** — undecodable captures needing a human: **Time · Band · Pulse
   summary · Sample · Class**. **Sample** links to `inspect`/download the recorded IQ (`.cu8`) so
   you can eyeball or replay it in an external tool; you assign a class + notes or discard. (Shows

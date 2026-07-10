@@ -24,6 +24,8 @@
     code { color: #9fd0ff; }
     /* unicode-block sparkline (Pi §7) — inline, self-contained, no asset/JS */
     .spark { font-family: monospace; letter-spacing: -1px; color: #6fd08c; font-size: 14px; line-height: 1; white-space: pre; }
+    .reading { color: #cfe3ff; font-size: 12px; }
+    #feed .rd { color: #9fd0ff; }
     .controls { margin-bottom: 8px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
     a.link { color: #9fd0ff; cursor: pointer; text-decoration: underline; }
   </style>
@@ -59,13 +61,14 @@
     <section>
       <h2>Devices</h2>
       <table id="devices">
-        <thead><tr><th>Model</th><th>ID/Ch</th><th>Band</th><th>Count</th><th>Last seen</th><th>Activity</th><th>SNR</th><th>Label / Room / Class</th></tr></thead>
+        <thead><tr><th>Model</th><th>ID/Ch</th><th>Band</th><th>Latest reading</th><th>Count</th><th>Last seen</th><th>Activity</th><th>SNR</th><th>Label / Room / Class</th></tr></thead>
         <tbody>
         {% for d in devices %}
           <tr>
             <td>{{ d.model }}</td>
             <td>{{ d.dev_id }}{% if d.channel %}/{{ d.channel }}{% endif %}</td>
             <td>{{ "%.2f"|format((d.typical_freq_hz or 0) / 1e6) }} MHz</td>
+            <td class="reading">{{ readings[d.device_id] or "—" }}</td>
             <td>{{ d.count }}</td>
             <td class="muted">{{ d.last_seen or "—" }}</td>
             <td><span class="spark" title="recent activity">{{ sparklines[d.device_id] or "—" }}</span></td>
@@ -83,7 +86,7 @@
             </td>
           </tr>
         {% else %}
-          <tr><td colspan="8" class="muted">No devices yet — run the collector.</td></tr>
+          <tr><td colspan="9" class="muted">No devices yet — set Capture to Decode.</td></tr>
         {% endfor %}
         </tbody>
       </table>
@@ -433,12 +436,15 @@
     // --- live feed ---
     function renderFeed(events) {
       const feed = document.getElementById('feed');
+      function esc(s) { return String(s).replace(/[&<>]/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }); }
       feed.innerHTML = events.map(function (e) {
         const mhz = ((e.freq_hz || 0) / 1e6).toFixed(2);
         const name = e.label || e.model || 'unknown';
         const room = e.room ? ' · ' + e.room : '';
-        return '<div>' + (e.ts || '') + ' · <code>' + mhz + '</code> · ' + name + room +
-               (e.snr != null ? ' · ' + e.snr + ' dB' : '') + '</div>';
+        const rd = e.reading ? ' · <span class="rd">' + esc(e.reading) + '</span>' : '';
+        return '<div>' + esc(e.ts || '') + ' · <code>' + mhz + '</code> · ' + esc(name) + esc(room) +
+               (e.snr != null ? ' · ' + esc(e.snr) + ' dB' : '') + rd + '</div>';
       }).join('');
     }
     function poll() {
