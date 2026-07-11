@@ -102,22 +102,24 @@ static void census_camp_draw(Canvas* canvas, void* model) {
     if(pct > 124) pct = 124;
     canvas_draw_frame(canvas, 2, 18, 124, 9);
     canvas_draw_box(canvas, 3, 19, pct, 7);
+    /* four text rows below the bar at 9px spacing, ending at y=63 so the last line isn't clipped
+     * off the 64px screen (was y=37/47/57/64 — the 64 baseline ran off the bottom). */
     snprintf(buf, sizeof(buf), "RSSI %d dBm", (int)m->rssi);
-    canvas_draw_str(canvas, 2, 37, buf);
+    canvas_draw_str(canvas, 2, 36, buf);
     snprintf(buf, sizeof(buf), "%lus", (unsigned long)m->elapsed_s);
-    canvas_draw_str(canvas, 92, 37, buf);
+    canvas_draw_str(canvas, 92, 36, buf);
 
     /* last match/unknown tag (§6) */
     snprintf(buf, sizeof(buf), "Last: %s", m->recent_len ? m->recent[0].match : "-");
-    canvas_draw_str(canvas, 2, 47, buf);
+    canvas_draw_str(canvas, 2, 45, buf);
 
     snprintf(buf, sizeof(buf), "Hits: %lu", (unsigned long)m->hits);
-    canvas_draw_str(canvas, 2, 57, buf);
-    canvas_draw_str(canvas, 70, 57, "OK: hits");
+    canvas_draw_str(canvas, 2, 54, buf);
+    canvas_draw_str(canvas, 70, 54, "OK: hits");
     if(m->sd_low)
-        canvas_draw_str(canvas, 2, 64, "SD LOW: blips only");
+        canvas_draw_str(canvas, 2, 63, "SD LOW: blips only");
     else
-        canvas_draw_str(canvas, 2, 64, "Back: stop");
+        canvas_draw_str(canvas, 2, 63, "Back: stop");
 }
 
 static bool census_camp_input(InputEvent* event, void* context) {

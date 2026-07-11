@@ -126,6 +126,8 @@ class PySerialTransport(RpcTransport):
         self._serial.write(data)
 
     def read(self, n: int, timeout: float | None = None) -> bytes:  # pragma: no cover
+        if timeout is not None and timeout != self._serial.timeout:
+            self._serial.timeout = timeout  # honor per-call timeout (short reads for draining)
         return self._serial.read(n)
 
     def close(self) -> None:  # pragma: no cover
@@ -175,6 +177,17 @@ class RpcSession:
         length, _ = decode_varint(bytes(prefix))
         return self._read_exact(length, timeout)
 
+    def drain(self, timeout: float = 0.25) -> int:
+        """Consume any pending response frames (e.g. the command-status ACKs each input request
+        gets) so a following screenshot's frame reader stays in sync. Returns #frames drained."""
+        n = 0
+        while True:
+            try:
+                self.read_frame(timeout=timeout)
+                n += 1
+            except (TimeoutError, ValueError):
+                return n
+
     # --- device ops (need the firmware protobuf + a real Flipper) ---
 
     def start_rpc(self) -> None:
@@ -207,12 +220,14 @@ class RpcSession:
                 self.send_frame(m.SerializeToString())
                 time.sleep(0.02)
             time.sleep(0.06)
+        self.drain()  # consume the command-status ACKs so a later screenshot stays in sync
 
     def screenshot(self) -> bytes:
         """Grab one 1024-byte framebuffer: start the screen stream, read until a ScreenFrame
         arrives, stop the stream. Decode with framebuffer.decode_framebuffer()."""
         pb, _gui = _load_pb()
         self.start_rpc()
+        self.drain()  # clear any stale ACKs so we read the ScreenFrame, not a leftover response
         start = pb.Main(command_id=self._next_id())
         start.gui_start_screen_stream_request.SetInParent()
         self.send_frame(start.SerializeToString())
