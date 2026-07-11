@@ -7,7 +7,11 @@
  * the sweep across the CC1101 segments; OK toggles the top-hits mini-list; Left/Right page
  * segments. On completion it advances to the Recon results scene. Live RSSI = TODO(hw). */
 
-#define RECON_EVENT_DONE 0
+/* A high sentinel that can't collide with any downstream submenu index. It is emitted as a
+ * view_dispatcher custom event and, if recon is stopped mid-pass, may arrive after the scene has
+ * already advanced to Recon results — so it MUST NOT alias a valid item index (0 aliased
+ * ReconRunAccumulate / ReconEntryPin / results row 0, which re-launched recon and crashed). */
+#define RECON_EVENT_DONE 0xE000u
 
 static void recon_progress_cb(void* context) {
     SubCensusApp* app = context;

@@ -126,8 +126,12 @@ static bool spec_input(InputEvent* event, void* context) {
         return true;
     }
     if(event->key == InputKeyBack) {
+        /* Consume Back: the back_cb stops recon, whose completion fires RECON_EVENT_DONE and drives
+         * the single navigation to Recon results. Returning false here would ALSO let the scene
+         * manager pop the scene, a second navigation that raced the DONE event and re-entered
+         * recon (crash). One button, one exit path. */
         if(v->back_cb) v->back_cb(v->back_ctx);
-        return false; /* let the scene manager pop */
+        return true;
     }
     return false;
 }
