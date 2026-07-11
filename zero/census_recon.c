@@ -17,8 +17,8 @@ static const uint32_t RECON_KNOWN[] = {
     310000000,
     315000000,
     318000000,
-    319500000,  /* GE/Interlogix/2GIG security sensors (door/window/motion) — US alarm band */
-    345000000,  /* Honeywell 5800-series security sensors */
+    319500000, /* GE/Interlogix/2GIG security sensors (door/window/motion) — US alarm band */
+    345000000, /* Honeywell 5800-series security sensors */
     390000000,
     418000000,
     433420000,
@@ -433,7 +433,7 @@ CensusRecon* census_recon_alloc(Storage* storage) {
     CensusRecon* r = malloc(sizeof(CensusRecon));
     memset(r, 0, sizeof(CensusRecon));
     r->storage = storage;
-    /* subghz_devices_init() is owned by the app-lifetime census_worker; just fetch the device. */
+    /* subghz_devices_init() is app-lifetime (subcensuszero.c app_alloc); just fetch the device. */
     r->device = subghz_devices_get_by_name(SUBGHZ_DEVICE_CC1101_INT_NAME);
     r->step_hz = 1000000;
     r->threshold_dbm = -80;

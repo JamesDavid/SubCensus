@@ -24,7 +24,8 @@
  * census (identify by feature vector, not perfect long-signal replay). */
 #define CENSUS_TIMINGS_CAP 2048
 #define CENSUS_RECENT_CAP  16
-#define CENSUS_SUB_BUF     12288 /* .sub text buffer (transient during a capture). Sized for
+#define CENSUS_SUB_BUF \
+    12288 /* .sub text buffer (transient during a capture). Sized for
                                   * CENSUS_TIMINGS_CAP timings; sc_sub_encode returns an error and
                                   * the capture is skipped (gracefully) if a burst won't fit. */
 #define CENSUS_AUTO_MARGIN 12.0f /* Auto threshold = noise floor + margin (§4) */
@@ -516,7 +517,8 @@ CensusWorker* census_worker_alloc(Storage* storage) {
     memset(w, 0, sizeof(CensusWorker));
     w->storage = storage;
     w->recent_mutex = furi_mutex_alloc(FuriMutexTypeNormal);
-    subghz_devices_init();
+    /* subghz_devices_init() is app-lifetime (subcensuszero.c), not owned by this lazy worker, so
+     * Run Recon works without first visiting Sweep/Camp. Just fetch the already-registered device. */
     w->device = subghz_devices_get_by_name(SUBGHZ_DEVICE_CC1101_INT_NAME);
     /* standard SubGhz decoder registry for opportunistic protocol tagging (§5.1, M5) */
     w->env = subghz_environment_alloc();
@@ -537,7 +539,7 @@ void census_worker_free(CensusWorker* w) {
     census_worker_stop(w);
     subghz_receiver_free(w->receiver);
     subghz_environment_free(w->env);
-    subghz_devices_deinit();
+    /* subghz_devices_deinit() is app-lifetime (subcensuszero.c), not paired here. */
     if(w->brain) free(w->brain);
     furi_mutex_free(w->recent_mutex);
     free(w);

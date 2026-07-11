@@ -1,3 +1,5 @@
+#include <lib/subghz/devices/devices.h>
+
 #include "subcensuszero_i.h"
 
 static bool subcensus_custom_event_callback(void* context, uint32_t event) {
@@ -61,6 +63,12 @@ static SubCensusApp* subcensus_app_alloc(void) {
 
     census_settings_load(app->storage, &app->settings);
     census_storage_init(app->storage, &app->settings);
+    /* The subghz device-plugin registry is app-lifetime and cheap (it is NOT the ~20KB
+     * receiver/environment that OOM'd — that lives in the lazy worker). Both the recon and the
+     * worker flows fetch the CC1101 via subghz_devices_get_by_name(), which needs this init first;
+     * initializing it here (not in the lazy worker) is what lets Run Recon work without first
+     * visiting Sweep/Camp. */
+    subghz_devices_init();
     /* worker + recon are allocated lazily (subcensus_ensure_*) on entering their flow and freed
      * at the main menu (subcensus_free_heavy) — see the header note. Eager alloc here OOM'd. */
     return app;
@@ -106,6 +114,7 @@ static void subcensus_app_free(SubCensusApp* app) {
     census_spectrum_view_free(app->spectrum_view);
     census_editor_view_free(app->editor_view);
     subcensus_free_heavy(app); /* frees recon + worker if a flow left them allocated */
+    subghz_devices_deinit(); /* app-lifetime registry (paired with the init in app_alloc) */
 
     scene_manager_free(app->scene_manager);
     view_dispatcher_free(app->view_dispatcher);
