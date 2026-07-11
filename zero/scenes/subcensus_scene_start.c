@@ -21,6 +21,7 @@ static void start_cb(void* context, uint32_t index) {
 
 void subcensus_scene_start_on_enter(void* context) {
     SubCensusApp* app = context;
+    subcensus_free_heavy(app); /* back at the main menu -> release recon/worker for headroom */
     Submenu* menu = app->submenu;
     submenu_reset(menu);
 

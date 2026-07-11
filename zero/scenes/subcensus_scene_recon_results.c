@@ -89,6 +89,7 @@ static void add_occupancy(SubCensusApp* app, Submenu* menu) {
 
 void subcensus_scene_recon_results_on_enter(void* context) {
     SubCensusApp* app = context;
+    subcensus_ensure_recon(app);
     Submenu* menu = app->submenu;
     submenu_reset(menu);
     submenu_set_header(menu, "Recon: occ / watchlist");

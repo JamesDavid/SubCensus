@@ -191,14 +191,21 @@ class RpcSession:
         self._rpc_started = True
 
     def send_input(self, events) -> None:
-        """Inject Gui input events (InputEvent list) over RPC — drives the on-device UI."""
+        """Inject Gui input events (InputEvent list) over RPC — drives the on-device UI. A real
+        button emits PRESS -> (SHORT|LONG) -> RELEASE; the firmware's GUI ignores a lone SHORT, so
+        a SHORT/LONG event is expanded to that full sequence. Explicit PRESS/RELEASE/REPEAT are
+        sent verbatim for fine control."""
         pb, gui = _load_pb()
         self.start_rpc()
         for ev in events:
-            m = pb.Main(command_id=self._next_id())
-            m.gui_send_input_event_request.key = gui.InputKey.Value(ev.key.name)
-            m.gui_send_input_event_request.type = gui.InputType.Value(ev.type.name)
-            self.send_frame(m.SerializeToString())
+            name = ev.type.name
+            seq = ["PRESS", name, "RELEASE"] if name in ("SHORT", "LONG") else [name]
+            for tname in seq:
+                m = pb.Main(command_id=self._next_id())
+                m.gui_send_input_event_request.key = gui.InputKey.Value(ev.key.name)
+                m.gui_send_input_event_request.type = gui.InputType.Value(tname)
+                self.send_frame(m.SerializeToString())
+                time.sleep(0.02)
             time.sleep(0.06)
 
     def screenshot(self) -> bytes:

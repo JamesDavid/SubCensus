@@ -14,6 +14,7 @@ static void recon_run_cb(void* context, uint32_t index) {
 
 void subcensus_scene_recon_run_on_enter(void* context) {
     SubCensusApp* app = context;
+    subcensus_ensure_recon(app);
     Submenu* menu = app->submenu;
     submenu_reset(menu);
     submenu_set_header(menu, "Run Recon");

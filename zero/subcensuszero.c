@@ -61,9 +61,28 @@ static SubCensusApp* subcensus_app_alloc(void) {
 
     census_settings_load(app->storage, &app->settings);
     census_storage_init(app->storage, &app->settings);
-    app->worker = census_worker_alloc(app->storage);
-    app->recon = census_recon_alloc(app->storage);
+    /* worker + recon are allocated lazily (subcensus_ensure_*) on entering their flow and freed
+     * at the main menu (subcensus_free_heavy) — see the header note. Eager alloc here OOM'd. */
     return app;
+}
+
+void subcensus_ensure_recon(SubCensusApp* app) {
+    if(!app->recon) app->recon = census_recon_alloc(app->storage);
+}
+
+void subcensus_ensure_worker(SubCensusApp* app) {
+    if(!app->worker) app->worker = census_worker_alloc(app->storage);
+}
+
+void subcensus_free_heavy(SubCensusApp* app) {
+    if(app->recon) {
+        census_recon_free(app->recon);
+        app->recon = NULL;
+    }
+    if(app->worker) {
+        census_worker_free(app->worker);
+        app->worker = NULL;
+    }
 }
 
 static void subcensus_app_free(SubCensusApp* app) {
@@ -86,8 +105,7 @@ static void subcensus_app_free(SubCensusApp* app) {
     census_camp_view_free(app->camp_view);
     census_spectrum_view_free(app->spectrum_view);
     census_editor_view_free(app->editor_view);
-    census_recon_free(app->recon);
-    census_worker_free(app->worker);
+    subcensus_free_heavy(app); /* frees recon + worker if a flow left them allocated */
 
     scene_manager_free(app->scene_manager);
     view_dispatcher_free(app->view_dispatcher);

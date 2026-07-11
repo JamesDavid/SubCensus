@@ -125,4 +125,12 @@ typedef struct {
     const char* todo_msg; /* placeholder text for not-yet-implemented milestones */
 } SubCensusApp;
 
+/* Lazy allocation of the heavy capture subsystems (recon ~9KB, worker + brain) so the idle menu
+ * keeps memory headroom on the Flipper's small app heap. The FAP loads its whole 109KB binary
+ * into RAM; allocating recon+worker eagerly on top left <4KB free -> out-of-memory crash. Instead
+ * allocate on first use in their flow and free when back at the main menu (Start scene). */
+void subcensus_ensure_recon(SubCensusApp* app);
+void subcensus_ensure_worker(SubCensusApp* app);
+void subcensus_free_heavy(SubCensusApp* app);
+
 #endif /* SUBCENSUSZERO_I_H */

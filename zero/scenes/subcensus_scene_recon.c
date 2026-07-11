@@ -57,6 +57,7 @@ static void recon_timer_cb(void* context) {
 
 void subcensus_scene_recon_on_enter(void* context) {
     SubCensusApp* app = context;
+    subcensus_ensure_recon(app);
     census_spectrum_view_set_back_callback(app->spectrum_view, recon_back_cb, app);
 
     census_recon_set_progress(app->recon, recon_progress_cb, app);

@@ -94,6 +94,8 @@ static void sweep_hint_result(DialogExResult result, void* context) {
 
 void subcensus_scene_sweep_on_enter(void* context) {
     SubCensusApp* app = context;
+    subcensus_ensure_recon(app);
+    subcensus_ensure_worker(app);
     app->live_sweep = true;
 
     /* No valid recon: never blocked, but show a dismissable hint (Zero §3.1 / System §9). */

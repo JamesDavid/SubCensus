@@ -47,6 +47,7 @@ static void camp_timer_cb(void* context) {
 
 void subcensus_scene_camp_on_enter(void* context) {
     SubCensusApp* app = context;
+    subcensus_ensure_worker(app);
     app->live_sweep = false;
     /* per-band watchlist threshold for this freq if present, else Auto/global (§3.2/A2) */
     float thr = CENSUS_THR_AUTO;
