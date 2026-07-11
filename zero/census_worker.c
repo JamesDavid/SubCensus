@@ -17,9 +17,16 @@
 #include "census_schema.h"
 #include "census_taxonomy.h"
 
-#define CENSUS_TIMINGS_CAP 4096
+/* Pulse-timing capacity for a captured burst. 4096 was 16KB embedded in the worker struct and,
+ * with the CC1101 subghz environment + the .sub encode buffer, OOM'd the Flipper on Sweep/Camp.
+ * 2048 (8KB) still covers essentially every ISM device (a 24-bit remote is ~50 pulses, weather
+ * sensors ~200, TPMS ~200); only an unusually long/noisy burst truncates — acceptable for a
+ * census (identify by feature vector, not perfect long-signal replay). */
+#define CENSUS_TIMINGS_CAP 2048
 #define CENSUS_RECENT_CAP  16
-#define CENSUS_SUB_BUF     20480
+#define CENSUS_SUB_BUF     12288 /* .sub text buffer (transient during a capture). Sized for
+                                  * CENSUS_TIMINGS_CAP timings; sc_sub_encode returns an error and
+                                  * the capture is skipped (gracefully) if a burst won't fit. */
 #define CENSUS_AUTO_MARGIN 12.0f /* Auto threshold = noise floor + margin (§4) */
 #define CENSUS_CAL_MS      2000 /* Auto noise-floor sample window (§4) */
 #define CENSUS_DEDUP_MS    3000 /* identical-decode dedup window — a repeated press burst (§7) */
