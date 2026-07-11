@@ -90,10 +90,17 @@ python build_signatures.py --signatures-dir <signatures_dir> \
 
 ## Using the dashboard — section by section
 
-![SubCensusPi dashboard](docs/screens/dashboard.svg)
+![SubCensusPi dashboard](docs/screens/dashboard.png)
 
-> Mockup modelled from the real dashboard running against the fixture stream below — regenerate
-> with `python docs/make_web_mockups.py`; swap for a browser screenshot any time.
+> **Real screenshot** of the dashboard running live on a Raspberry Pi (`fourpi`) with an RTL-SDR:
+> the Capture control, the Devices table (a confirmed `Fineoffset-WH2` weather sensor + a
+> `Generic-Remote` test signal transmitted from a Flipper), the live feed, the Captured-bursts
+> review queue across all bands, and the Bands occupancy/recon controls.
+
+A device's detail page (`/device/<id>`) — confidence + cadence, candidate fingerprints, captured
+bursts, and the full reception log:
+
+![Device detail](docs/screens/device_detail.png)
 
 Open `http://<host>:8080/`. It's a **single self-hosted page** (no external JS/CDN, works
 offline), auto-refreshing on a poll. The header shows `place: <active>` and a device count.

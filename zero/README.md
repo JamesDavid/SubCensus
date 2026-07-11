@@ -24,9 +24,11 @@ names differ) and re-verify.
 
 ## Using it — screen by screen
 
-> The images below are **placeholder mockups** (`docs/screens/*.svg`), modelled from the scene
-> draw code — not real device captures. Regenerate with `python zero/docs/make_screens.py`.
-> Replace each with a real qFlipper screenshot (same filename) once hardware is available.
+> The **Main menu** below is a **real screenshot** captured off a Flipper Zero over serial
+> (the app's 128×64 framebuffer). The remaining images are still **placeholder mockups**
+> (`docs/screens/*.svg`) modelled from the scene draw code — regenerate with
+> `python zero/docs/make_screens.py`; each is replaced with a real capture as it's confirmed on
+> hardware.
 
 The intended flow is a **pipeline**: **Recon** once to learn what's active here → it writes a
 watchlist → **Sweep/Camp** monitor using it → **Review** to label captures → optionally **Edit**
@@ -34,7 +36,7 @@ to replay/identify or reverse-engineer. Everything writes under the active **Pla
 
 ### Main menu
 
-![Main menu](docs/screens/01_main_menu.svg)
+![Main menu](docs/screens/01_main_menu.png)
 
 The active **Place** is shown at the top (tap to switch/manage). Up/Down move, **OK** selects,
 **Back** exits. Items: **Run Recon · Recon results · Start Sweep · Start Camp · Review captures ·
