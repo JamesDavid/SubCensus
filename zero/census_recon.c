@@ -332,7 +332,14 @@ static int32_t census_recon_thread(void* context) {
             r->current_freq = freq;
             subghz_devices_idle(r->device);
             subghz_devices_set_frequency(r->device, freq);
-            /* short dwell sampling RSSI (TODO(hw): needs real airtime) */
+            /* Enter RX before reading RSSI: the CC1101's RSSI register is only valid in the RX
+             * state. Without this the reads come back a flat floor and no bin ever crosses the
+             * threshold (occupancy stayed ~0 / "hot 0"), so recon was effectively RF-blind. The
+             * chip also needs a brief settle after strobing RX before the first sample is good. */
+            subghz_devices_set_rx(r->device);
+            furi_delay_ms(3);
+            /* short dwell sampling RSSI (TODO(hw): dwell is brief — occupancy accrues over passes,
+             * it is NOT a camp/decode, so a single transient burst can fall between samples). */
             uint32_t ts = furi_hal_rtc_get_timestamp();
             for(int s = 0; s < 4; s++) {
                 float rssi = subghz_devices_get_rssi(r->device);
